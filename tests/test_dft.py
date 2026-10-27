@@ -63,3 +63,16 @@ def test_grid_shadow_lights_matching_cell():
             hit = (fx, fy) == (1, 2)
             assert abs((u * np.cos(B)).sum()) < 1e-9
             assert abs((u * np.sin(B)).sum() - (-N * N / 2 if hit else 0)) < 1e-9
+
+
+def test_product_shifts_frequency_and_is_circular_conv():
+    """実験05: cos(5)·cos(3) は差 2・和 8 に N/4、位相は差・和。FFT(x·g) = (1/N)·（X と G のぐるっと回る畳み込み）。"""
+    N = 32
+    n = np.arange(N)
+    x, g = np.cos(2 * np.pi * 5 * n / N + np.pi / 3), np.cos(2 * np.pi * 3 * n / N + np.pi / 9)
+    Y = np.fft.fft(x * g, n=N, norm="backward")
+    assert abs(Y[2] - 8 * np.exp(1j * (np.pi / 3 - np.pi / 9))) < 1e-12
+    assert abs(Y[8] - 8 * np.exp(1j * (np.pi / 3 + np.pi / 9))) < 1e-12
+    X, G = np.fft.fft(x, n=N, norm="backward"), np.fft.fft(g, n=N, norm="backward")
+    C = np.array([sum(X[m] * G[(k - m) % N] for m in range(N)) for k in range(N)])
+    assert np.abs(Y - C / N).max() < 1e-12
