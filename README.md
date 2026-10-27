@@ -60,6 +60,7 @@ sin・cos の波に情報を載せて入れ、フーリエ変換で読み出し�
 | docs/lessons/ | 一歩ごとの学びのノート |
 | docs/library_check.md | ライブラリと計算の約束の確認表 |
 | docs/summary_20261027.md | 初日（実験01〜26）のまとめ |
+| docs/prior_art.md | 既にある仕組みの調査（出典つき）と、チャットボットまでに足りないもの |
 | docs/tsukkomi.md | 構想へのツッコミ（疑問・注意点）と、その後どうなったか |
 | src/ | 自作の版（素朴な離散フーリエ変換など） |
 | experiments/ | 実験のプログラム（expNN_名前.py）と条件（sweeps/） |
@@ -75,4 +76,4 @@ python -m pytest tests
 
 ## ライセンスと参考文献
 
-MIT ライセンス（[LICENSE](LICENSE)）。参考にした文献は docs/prior_art.md に出典つきでまとめます。
+MIT ライセンス（[LICENSE](LICENSE)）。参考にした文献は [docs/prior_art.md](docs/prior_art.md) に出典つきでまとめています。
