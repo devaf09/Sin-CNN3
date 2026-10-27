@@ -94,3 +94,11 @@ def test_correlation_peak_at_shift():
     k = np.random.default_rng(0).choice([-1.0, 1.0], N); y = np.roll(k, 3)
     c = np.fft.ifft(np.conj(np.fft.fft(k, n=N)) * np.fft.fft(y, n=N), n=N).real
     assert np.argmax(c) == 3 and abs(c[3] - N) < 1e-12
+
+
+def test_complex_grad_is_real_plus_i_imag():
+    """実験10: torch の複素数の勾配は ∂L/∂x + i·∂L/∂y。|z|² なら 2z。"""
+    z0 = torch.randn(8, dtype=torch.complex128, generator=torch.Generator().manual_seed(0))
+    z = z0.clone().requires_grad_(True)
+    (z.abs() ** 2).sum().backward()
+    assert (z.grad - 2 * z0).abs().max() < 1e-12
