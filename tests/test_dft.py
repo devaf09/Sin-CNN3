@@ -76,3 +76,21 @@ def test_product_shifts_frequency_and_is_circular_conv():
     X, G = np.fft.fft(x, n=N, norm="backward"), np.fft.fft(g, n=N, norm="backward")
     C = np.array([sum(X[m] * G[(k - m) % N] for m in range(N)) for k in range(N)])
     assert np.abs(Y - C / N).max() < 1e-12
+
+
+def test_circular_conv_and_zero_padding():
+    """実験07: FFT の掛け算はぐるっと回る畳み込み。長さ 2N にゼロを詰めると普通の畳み込みに一致する。"""
+    N = 8
+    x = np.arange(1, N + 1, dtype=float); h = np.zeros(N); h[:3] = 1
+    circ = np.fft.ifft(np.fft.fft(x, n=N) * np.fft.fft(h, n=N), n=N).real
+    assert np.allclose(circ, [16, 11, 6, 9, 12, 15, 18, 21])
+    pad = np.fft.ifft(np.fft.fft(x, n=2 * N) * np.fft.fft(h, n=2 * N), n=2 * N).real[:N + 2]
+    assert np.allclose(pad, np.convolve(x, h[:3]))
+
+
+def test_correlation_peak_at_shift():
+    """実験07: ifft(conj(FFT(k))·FFT(y)) は相関 Σ k[n]·y[n + s]。y = k を 3 ずらしたものなら s = 3 に N の山。"""
+    N = 8
+    k = np.random.default_rng(0).choice([-1.0, 1.0], N); y = np.roll(k, 3)
+    c = np.fft.ifft(np.conj(np.fft.fft(k, n=N)) * np.fft.fft(y, n=N), n=N).real
+    assert np.argmax(c) == 3 and abs(c[3] - N) < 1e-12
