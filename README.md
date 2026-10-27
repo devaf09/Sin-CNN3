@@ -54,6 +54,7 @@ sin・cos の波に情報を載せて入れ、フーリエ変換で読み出し�
 | NOTES.md | 実験ノート（数字の正本） |
 | docs/lessons/ | 一歩ごとの学びのノート |
 | docs/library_check.md | ライブラリと計算の約束の確認表 |
+| docs/tsukkomi.md | 構想へのツッコミ（疑問・注意点）と、その後どうなったか |
 | src/ | 自作の版（素朴な離散フーリエ変換など） |
 | experiments/ | 実験のプログラム（expNN_名前.py）と条件（sweeps/） |
 | results/ | 結果（1 回 = 1 行の JSON） |
