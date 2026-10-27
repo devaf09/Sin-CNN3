@@ -50,3 +50,16 @@ def test_leak_matches_geometric_sum():
     g = lambda d: (1 - np.exp(2j * np.pi * d)) / (1 - np.exp(2j * np.pi * d / N))
     X = np.fft.fft(np.cos(2 * np.pi * f * n / N), n=N, norm="backward")
     assert np.abs(X - (0.5 * g(f - n) + 0.5 * g(-f - n))).max() < 1e-12
+
+
+def test_grid_shadow_lights_matching_cell():
+    """実験04: 4 × 4 の周波数の格子（cos・sin の板）に縞を当てると、同じ周波数の区画だけ ±N²/2、ほかは 0。"""
+    N = 16
+    y, x = np.mgrid[0:N, 0:N]
+    u = np.cos(2 * np.pi * (1 * x + 2 * y) / N + np.pi / 2)            # 横 1・縦 2、90° ずらす
+    for fy in range(1, 5):
+        for fx in range(1, 5):
+            B = 2 * np.pi * (fx * x + fy * y) / N
+            hit = (fx, fy) == (1, 2)
+            assert abs((u * np.cos(B)).sum()) < 1e-9
+            assert abs((u * np.sin(B)).sum() - (-N * N / 2 if hit else 0)) < 1e-9
