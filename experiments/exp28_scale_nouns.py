@@ -21,6 +21,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--N", type=int, default=1040)
 ap.add_argument("--Fs", default="16,32,64", help="格子の周波数の数。0 なら画素ごとに自由な位相の板（回折の深層ネットワークと同じ、学習する数 = N × 列）")
 ap.add_argument("--cols", type=int, default=20)
+ap.add_argument("--init", default="0.1", help="格子の強さの初期値の大きさ。'scaled' なら 0.1/F（格子の値の大きさが F によらずそろう）")
 ap.add_argument("--dz", type=float, default=64.0)
 ap.add_argument("--steps", type=int, default=1500)
 ap.add_argument("--n_nouns", type=int, default=80)
@@ -69,7 +70,8 @@ for F in [int(f) for f in a.Fs.split(",")]:
     if F == 0:                                                                          # 画素ごとに自由な位相（周波数の制限なし）
         A = torch.nn.Parameter((0.1 * torch.randn(N, a.cols, generator=g)).to(dev)); grid = lambda: A
     else:
-        A = torch.nn.Parameter((0.1 * torch.randn(4, F, F, generator=g)).to(dev))
+        s0 = 0.1 / F if a.init == "scaled" else float(a.init)                                 # F が大きいと、4F² 個を足した格子の値が大きくなりすぎる
+        A = torch.nn.Parameter((s0 * torch.randn(4, F, F, generator=g)).to(dev))
         grid = lambda: sum(Y.T @ A[k] @ X for k, (Y, X) in enumerate(((sy, cy), (sy, sx), (cyy, cy), (cyy, sx))))   # 縦 (N) × 列 (cols)
     opt = torch.optim.Adam([A], lr=0.01)
     for step in range(a.steps):
