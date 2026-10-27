@@ -25,6 +25,8 @@ ap.add_argument("--steps", type=int, default=400)
 ap.add_argument("--gamma", type=float, default=2.0)
 ap.add_argument("--seeds", type=int, default=3)
 ap.add_argument("--lr", type=float, default=0.01)
+ap.add_argument("--target", default="xor", help="xor = どちらか片方だけ / a = A があるか / or = どちらかがある（表でも解ける確かめ用）")
+ap.add_argument("--dz", type=float, default=1.0, help="列と列の間の距離 [画素]（回折の強さ）")
 ap.add_argument("--cols", type=int, default=0, help="光が通る列の数（0 なら N）")
 ap.add_argument("--kinds", default="all", help="all か、名前の先頭")
 ap.add_argument("--device", default="cpu")
@@ -34,7 +36,7 @@ sys.stdout.reconfigure(encoding="utf-8"); torch.set_num_threads(2)
 N, F, L = a.N, a.F, 2 * a.N
 pos = torch.arange(N, dtype=torch.float32); fr = torch.arange(1, F + 1, dtype=torch.float32)
 sy, cy = torch.sin(2 * math.pi * fr[:, None] * pos / N), torch.cos(2 * math.pi * fr[:, None] * pos / N)
-H = torch.exp(1j * torch.sqrt((2 * math.pi) ** 2 - (2 * math.pi * torch.fft.fftfreq(L)) ** 2))
+H = torch.exp(1j * a.dz * torch.sqrt((2 * math.pi) ** 2 - (2 * math.pi * torch.fft.fftfreq(L)) ** 2))   # 列の間を dz 画素進む回折
 bump = lambda c: torch.exp(-((pos - c) / 4) ** 2)                                     # ふくらみ（幅 4 画素）
 win = torch.zeros(2, N); win[0, 20:40] = 1; win[1, 60:80] = 1                         # 右端の窓 2 個（答え 0 / 1）
 
@@ -44,7 +46,8 @@ def data(n, g):
     amp = (1 + 0.1 * torch.randn(n, 3, generator=g)) * torch.cat([ab, torch.ones(n, 1)], 1)
     ph = torch.exp(2j * math.pi * torch.rand(n, 3, generator=g))                       # でたらめな位相
     u = (amp * ph) @ torch.stack([bump(30), bump(70), bump(50)]).to(torch.complex64)
-    return u, (ab[:, 0] != ab[:, 1]).long()                                            # 答え = どちらか片方だけ
+    t = {"xor": ab[:, 0] != ab[:, 1], "a": ab[:, 0] > 0, "or": ab.sum(1) > 0}[a.target]
+    return u, t.long()                                                                 # 答え（既定: どちらか片方だけ）
 
 
 def forward(kind, A, u0):
