@@ -281,3 +281,20 @@ axs[2].set_ylabel("隠した名詞が上位 10 に入った割合（400 語か�
 axs[2].set_title(f"実際の文で名詞を隠し、隣の動詞・形容詞の手がかりの掛け算で当てる（{d[0]['cloze']['n']} 問）\n語板 0.40、表 0.43、よく出る順だけ 0.18", fontsize=9)
 save(fig, "exp55_goban_corpus")
 print("ok55")
+
+# 実験56: 語板を広げる
+d = lines(56)
+fig, axs = plt.subplots(1, 2, figsize=(15, 4.6), dpi=130)
+ks = ["名詞を見ない", "数えた表", "まっさら 100 回", "近い語板を写すだけ", "まっさら 600 回", "近い語板を写して 100 回", "表を観点の割合で平らに k=2", "表を観点の割合で平らに k=5"]
+v = [mm([r["A"][k]["bits"] for r in d]) for k in ks]
+bars(axs[0], [k.replace("表を観点の割合で平らに", "表を平らに\n").replace("近い語板を写して", "近い語板を写して\n").replace("まっさら ", "まっさら\n") for k in ks], [x[0] for x in v],
+     ["0.6", "C0", "C3", "C3", "C3", "C1", "C2", "C2"], "{:.2f}", [x[1] for x in v], [x[2] for x in v])
+axs[0].tick_params(axis="x", labelsize=7); axs[0].set_ylabel("交差エントロピー（ビット、低いほど良い）"); axs[0].set_ylim(2, 4)
+axs[0].set_title("実験56 A: まれな名詞（401〜1200 番目）。近い語板を写して 100 回は、まっさら 600 回より速く良い。\n素朴な表（+0.5）には勝つが、観点の割合へ寄せて平らにした表（k = 5）には負ける", fontsize=9)
+ks = ["動詞を見ない", "語板", "数えた表", "表を平らに k=10"]
+v = [mm([r["B"][k]["bits"] for r in d]) for k in ks]
+bars(axs[1], ks, [x[0] for x in v], ["0.6", "C3", "C0", "C2"], "{:.2f}")
+axs[1].set_ylabel("交差エントロピー（ビット）"); axs[1].set_ylim(1, 2.2)
+axs[1].set_title("B: 動詞の語板（300 語、観点 = を・が・で・に の名詞）。「その他」を観点ごとに分けると表にほぼ並ぶ\n（分けないと 2.14 で、動詞を見ない 2.00 より悪かった: 光の量を保つ器の上限）", fontsize=9)
+save(fig, "exp56_goban_grow")
+print("ok56")
