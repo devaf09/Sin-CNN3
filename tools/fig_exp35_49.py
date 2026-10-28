@@ -237,7 +237,7 @@ texts = [x["text"] for x in d[0]["rows"]]
 for k, (kk, c) in enumerate(zip(["0 − 特徴", "1 − p", "割り算"], ["C1", "C3", "C0"])):
     v = [np.mean([r["rows"][i][kk]["p_answer"] for r in d]) for i in range(len(texts))]
     axs[1].bar(np.arange(len(texts)) + (k - 1) * 0.27, v, 0.27, color=c, label=kk)
-axs[1].set_xticks(range(len(texts))); axs[1].set_xticklabels([f"{t}\n→ {x['answer']}" for t, x in zip(texts, d[0]["rows"])], fontsize=7, rotation=12, ha="right")
+axs[1].set_xticks(range(len(texts))); axs[1].set_xticklabels([t.replace(" ○○", "\n○○") + f"\n→ {x['answer']}" for t, x in zip(texts, d[0]["rows"])], fontsize=7)
 axs[1].set_ylabel("正しい物の割合（確信度）"); axs[1].legend(fontsize=8)
 axs[1].set_title("1 − p は掛け算の中で否定を扱うので確信度が高い。割り算は p ≈ 0 の物で爆発して外れる", fontsize=9)
 save(fig, "exp53_negation")
