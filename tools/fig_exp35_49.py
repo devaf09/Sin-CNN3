@@ -225,3 +225,20 @@ ax.set_ylabel("正しい物の割合（確信度）"); ax.legend(fontsize=8)
 ax.set_title("実験52: 周りの語の属性を掛け合わせて ○○ を当てる。掛け算は確信度が高い（足し算は 22〜53%）。\n遠くに別の話がある最後の文は、近い語を強める重み（持ち主の × 1.2）で初めて当たる。3・8 番目はリンゴとイチゴの区別がつかない手がかり（問題の作りの限界）", fontsize=9)
 save(fig, "exp52_cloze")
 print("ok51-52")
+
+# 実験53: 「〜ではない」の表し方
+d = lines(53)
+ks = ["無視", "読み落とす", "割り算", "0 − 特徴", "1 − p"]
+fig, axs = plt.subplots(1, 2, figsize=(13, 4.2), dpi=130)
+acc = [100 * np.mean([x[k]["ok"] for r in d for x in r["rows"]]) for k in ks]
+bars(axs[0], ks, acc, ["0.6", "0.6", "C0", "C1", "C3"], "{:.0f}%"); axs[0].set_ylabel("正しい物が 1 番だった割合（5 文 × 3 seed）")
+axs[0].set_title("実験53: 否定の手がかり（赤くない・果物ではない など）の扱い方\n持ち主の「0 − 特徴」と「1 − p（補い）」は全問正解", fontsize=9)
+texts = [x["text"] for x in d[0]["rows"]]
+for k, (kk, c) in enumerate(zip(["0 − 特徴", "1 − p", "割り算"], ["C1", "C3", "C0"])):
+    v = [np.mean([r["rows"][i][kk]["p_answer"] for r in d]) for i in range(len(texts))]
+    axs[1].bar(np.arange(len(texts)) + (k - 1) * 0.27, v, 0.27, color=c, label=kk)
+axs[1].set_xticks(range(len(texts))); axs[1].set_xticklabels([f"{t}\n→ {x['answer']}" for t, x in zip(texts, d[0]["rows"])], fontsize=7, rotation=12, ha="right")
+axs[1].set_ylabel("正しい物の割合（確信度）"); axs[1].legend(fontsize=8)
+axs[1].set_title("1 − p は掛け算の中で否定を扱うので確信度が高い。割り算は p ≈ 0 の物で爆発して外れる", fontsize=9)
+save(fig, "exp53_negation")
+print("ok53")
