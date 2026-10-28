@@ -242,3 +242,24 @@ axs[1].set_ylabel("正しい物の割合（確信度）"); axs[1].legend(fontsiz
 axs[1].set_title("1 − p は掛け算の中で否定を扱うので確信度が高い。割り算は p ≈ 0 の物で爆発して外れる", fontsize=9)
 save(fig, "exp53_negation")
 print("ok53")
+
+# 実験54: カー効果をどこでかけるか
+R = collections.defaultdict(list)
+for r0 in lines(54):
+    for r in r0["rows"]:
+        R[r["kind"]].append(r)
+ks = list(R)
+fig, axs = plt.subplots(1, 2, figsize=(14, 4.4), dpi=130)
+for ax, key, lab in [(axs[0], "acc", "次の文字の当たり（%）"), (axs[1], "bits", "交差エントロピー（ビット/文字、低いほど良い）")]:
+    v = [mm([(100 if key == "acc" else 1) * r[key] for r in R[k]]) for k in ks]
+    bars(ax, [k.replace("（数える）", "").replace("光の器・", "").replace("（カー・", "\n（カー・") for k in ks], [x[0] for x in v],
+         ["0.7"] * 3 + ["C0", "C3", "C1", "C1", "C2", "C2"], "{:.1f}" if key == "acc" else "{:.2f}", [x[1] for x in v], [x[2] for x in v])
+    ax.tick_params(axis="x", labelsize=7); ax.set_ylabel(lab)
+    if key == "acc":
+        ax.axhline(25.9, ls="--", c="gray", lw=0.8); ax.set_ylim(15, 36)
+    else:
+        ax.set_ylim(3.8, 5.6)
+axs[0].set_title("実験54: カー効果の強さを明るさの平均でそろえると、もう崩れない（実験35 は 3〜15%）。\n焦点面（記号が光の点になる所）でかけると 3 seed とも 2-gram（25.9%）を越えた", fontsize=9)
+axs[1].set_title("確率の付け方は「明るさを測って出し直す」2 段がいちばん良い（4.71）", fontsize=9)
+save(fig, "exp54_kerr_focal")
+print("ok54")
