@@ -263,3 +263,21 @@ axs[0].set_title("実験54: カー効果の強さを明るさの平均でそろ�
 axs[1].set_title("確率の付け方は「明るさを測って出し直す」2 段がいちばん良い（4.71）", fontsize=9)
 save(fig, "exp54_kerr_focal")
 print("ok54")
+
+# 実験55: 会話データから語板
+d = lines(55)
+fig, axs = plt.subplots(1, 3, figsize=(17, 4.4), dpi=130)
+b = d[0]["base"]
+names = ["名詞を見ない\n（観点だけ）", "語板\n（光の器 400 枚）", "数えた表\n（デジタル）"]
+for ax, key, lab, fmt in [(axs[0], "bits", "交差エントロピー（ビット、低いほど良い）", "{:.2f}"), (axs[1], "top1", "上位 1 に入った割合", "{:.2f}")]:
+    gv = mm([r["eval"][key] for r in d])
+    bars(ax, names, [b["名詞を見ない"][key], gv[0], b["数えた表"][key]], ["0.6", "C3", "C0"], fmt)
+    ax.set_ylabel(lab)
+axs[0].set_title("実験55: 学習に使っていない会話で、(名詞, 観点) → 値 を当てる\n語板は数えた表にほぼ追いつく（名詞を見ない 3.99 → 語板 2.69、表 2.53）", fontsize=9)
+axs[1].set_title("上位 1 の当たり: 語板 0.49、表 0.52", fontsize=9)
+cz = mm([r["cloze"]["top10"] for r in d]); bc = d[0]["base_cloze"]
+bars(axs[2], ["よく出る順だけ", "語板の掛け算", "数えた表の掛け算"], [bc["よく出る順だけ"]["top10"], cz[0], bc["数えた表"]["top10"]], ["0.6", "C3", "C0"], "{:.2f}")
+axs[2].set_ylabel("隠した名詞が上位 10 に入った割合（400 語から）")
+axs[2].set_title(f"実際の文で名詞を隠し、隣の動詞・形容詞の手がかりの掛け算で当てる（{d[0]['cloze']['n']} 問）\n語板 0.40、表 0.43、よく出る順だけ 0.18", fontsize=9)
+save(fig, "exp55_goban_corpus")
+print("ok55")
