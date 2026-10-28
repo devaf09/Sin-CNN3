@@ -298,3 +298,20 @@ axs[1].set_ylabel("交差エントロピー（ビット）"); axs[1].set_ylim(1,
 axs[1].set_title("B: 動詞の語板（300 語、観点 = を・が・で・に の名詞）。「その他」を観点ごとに分けると表にほぼ並ぶ\n（分けないと 2.14 で、動詞を見ない 2.00 より悪かった: 光の量を保つ器の上限）", fontsize=9)
 save(fig, "exp56_goban_grow")
 print("ok56")
+
+# 実験57・58: 語板を表に追いつかせる
+d57, d58 = lines(57), lines(58)
+fig, ax = plt.subplots(figsize=(13, 4.6), dpi=130)
+groups = ["よく出る名詞", "まれな名詞", "動詞"]
+series = [("実験56（平らにしない、600 回）", "C0", [mm([r["よく出る名詞"]["bits"] for r in d57 if r["k"] == 0]), mm([r["まれ 近い語板を写して 100 回"]["bits"] for r in d57 if r["k"] == 0]), mm([r["動詞"]["bits"] for r in d57 if r["k"] == 0])]),
+          ("実験57（平らにした目標 k = 5、600 回）", "C1", [mm([r["よく出る名詞"]["bits"] for r in d57 if r["k"] == 5]), mm([r["まれ 近い語板を写して 100 回"]["bits"] for r in d57 if r["k"] == 5]), mm([r["動詞"]["bits"] for r in d57 if r["k"] == 5])]),
+          ("実験58（+ 出口をずらす + 2000 回）", "C3", [mm([r["よく出る名詞"] for r in d58]), mm([r["まれ 近い語板を写して 300 回"] for r in d58]), mm([r["動詞"] for r in d58])]),
+          ("平らにした表（デジタル）", "0.4", [(d58[0]["よく出る名詞 表"],) * 3, (d58[0]["まれ 表"],) * 3, (d58[0]["動詞 表"],) * 3])]
+for k, (lab, c, v) in enumerate(series):
+    ax.bar(np.arange(3) + (k - 1.5) * 0.2, [x[0] for x in v], 0.2, color=c, label=lab)
+    for i, x in enumerate(v):
+        ax.text(i + (k - 1.5) * 0.2, x[0] + 0.01, f"{x[0]:.2f}", ha="center", fontsize=7)
+ax.set_xticks(range(3)); ax.set_xticklabels(groups); ax.set_ylim(1.2, 2.9); ax.set_ylabel("交差エントロピー（ビット、低いほど良い）"); ax.legend(fontsize=8)
+ax.set_title("実験57・58: 語板を平らにした表に追いつかせる。目標を平らにし、観点どうしで出口を取り合わないようにずらし、長めに学ぶと、\n差は よく出る名詞 0.02・まれな名詞 0.01・動詞 0.03 ビットまで縮んだ（計画の段階 1 の条件 0.05 以内を満たした）", fontsize=9)
+save(fig, "exp58_goban_tuned")
+print("ok58")
