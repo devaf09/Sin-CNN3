@@ -192,3 +192,36 @@ for ax, sig in zip(axs, [0.6, 1.0]):
     ax.set_title(f"実験50: 1 段ごとに雑音（σ = {sig}）と光の減り 7% が入る鎖を 30 段たどる\n明るさを 2 乗以上して組み直すと、何段たどっても濁らない", fontsize=9)
 save(fig, "exp50_chain_cleanup")
 print("ok50")
+
+# 実験51: 知らない物に出会ったら新しいグレイン
+d = lines(51)
+fig, axs = plt.subplots(1, 3, figsize=(18, 4.4), dpi=130)
+ax = axs[0]; names = list(d[0]["A"]); known = ["リンゴ", "トマト", "イチゴ", "キュウリ"]
+best = [mm([max(r["A"][n].values()) for r in d]) for n in names]
+bars(ax, names, [b[0] for b in best], ["C0" if n in ("リンゴ", "青リンゴ", "トマト") else "C3" for n in names], "{:.2f}", [b[1] for b in best], [b[2] for b in best])
+ax.axhline(0.4, ls="--", c="k"); ax.text(5.4, 0.42, "しきい値 ρ = 0.4", ha="right", fontsize=8)
+ax.set_ylabel("いちばん合うグレインとの合う率"); ax.set_title("実験51 A: 学習済み 4 つ（リンゴ・トマト・イチゴ・キュウリ）との合う率\n知らない物（赤）は 0.19〜0.32、知っている物（青）は 0.50〜0.87", fontsize=9)
+ax = axs[1]; ks = list(d[0]["B"])
+v = [mm([r["B"][k]["unseen_tv"] for r in d]) for k in ks]
+bars(ax, [k.replace(" 観点 ", "観点\n").replace("近いグレインを写す", "近い物を写す").replace("写して見た観点だけ学ぶ", "写して学ぶ") for k in ks], [x[0] for x in v], ["0.6", "C0", "C1"] * 2, "{:.2f}", [x[1] for x in v], [x[2] for x in v])
+ax.tick_params(axis="x", labelsize=7); ax.set_ylabel("見ていない観点の、本当のナスとの差（小さいほど良い）")
+ax.set_title("B: 新しいナスのグレインの学び始め。近いグレイン（4 観点ならキュウリ）を写すと、\n見ていない「味」も当たる（0.13〜0.15）。3 観点では近い物をトマトと取り違えた", fontsize=9)
+ax = axs[2]; C = {k: mm([r["C"][k] for r in d]) for k in d[0]["C"]}
+labs = ["共有の板\n学習前", "共有の板\nナスだけ学習", "共有の板\n全部をもう一度", "別々のグレイン"]
+keys = ["shared_before", "shared_newonly_old", "shared_all_old", "separate_old"]
+bars(ax, labs, [C[k][0] for k in keys], ["C0", "C3", "C1", "C2"], "{:.2f}", [C[k][1] for k in keys], [C[k][2] for k in keys])
+ax.set_ylabel("古い 4 物の表との差"); ax.set_title("C: 1 枚の共有の板にナスを足してナスだけ学習すると、ほかを忘れる（0.18 → 0.75）\n別々のグレインなら、ほかは 1 画素も変わらない（直交）", fontsize=9)
+save(fig, "exp51_new_grain")
+
+# 実験52: 周りの語の属性の掛け算で空いた所を当てる
+d = lines(52)
+fig, ax = plt.subplots(figsize=(15, 4.8), dpi=130)
+texts = [r["text"] for r in d[0]["rows"]]
+for k, (kind, c) in enumerate(zip(["重み 1", "距離の重み", "足し算"], ["C0", "C3", "0.6"])):
+    v = [np.mean([r["rows"][i][kind]["p_answer"] for r in d]) for i in range(len(texts))]
+    ax.bar(np.arange(len(texts)) + (k - 1) * 0.27, v, 0.27, color=c, label=kind if kind != "重み 1" else "掛け算（重み 1）")
+ax.set_xticks(range(len(texts))); ax.set_xticklabels([f"{t}\n→ {r['answer']}" for t, r in zip(texts, d[0]["rows"])], fontsize=7, rotation=12, ha="right")
+ax.set_ylabel("正しい物の割合（確信度）"); ax.legend(fontsize=8)
+ax.set_title("実験52: 周りの語の属性を掛け合わせて ○○ を当てる。掛け算は確信度が高い（足し算は 22〜53%）。\n遠くに別の話がある最後の文は、近い語を強める重み（持ち主の × 1.2）で初めて当たる。3・8 番目はリンゴとイチゴの区別がつかない手がかり（問題の作りの限界）", fontsize=9)
+save(fig, "exp52_cloze")
+print("ok51-52")
