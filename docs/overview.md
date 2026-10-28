@@ -91,6 +91,8 @@
 
 ## 6. もっと読む
 
+- [docs/plan_large_scale.md](plan_large_scale.md): 大規模な学習の計画（案）
+
 - [docs/explain_20261027.md](explain_20261027.md): 重ね合わせの限界と、規模を広げたときの話（図つき）
 - [docs/summary_20261027.md](summary_20261027.md): 初日（実験01〜26）のまとめ
 - [docs/lessons/](lessons/): 一歩ずつの学びのノート
