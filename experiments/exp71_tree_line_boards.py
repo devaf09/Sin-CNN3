@@ -20,14 +20,27 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from goban_batch import run
 
 sys.stdout.reconfigure(encoding="utf-8"); torch.set_num_threads(4); t00 = time.time()
+# MODEL=v1（実験59、観点 5）/ v2（実験73、観点 9）。COMMON=1 なら、両方にある語だけで問題を作る（v1 と v2 を同じ問題で比べる、2026-10-30）
+MODEL = os.environ.get("MODEL", "v1"); COMMON = os.environ.get("COMMON") == "1"
 M = torch.load("D:/AI_git/Sin-CNN3_private/models/goban_名詞_seed0.pt", weights_only=False)
-WORDS = M["words"]; WI = {w: i for i, w in enumerate(WORDS)}
+if MODEL == "v2":
+    P = []; WORDS = []
+    for k in (0, 1):                                                                        # 語板 v2 は名詞を 2 つに分けて学んだので、合わせる
+        M2 = torch.load(f"D:/AI_git/Sin-CNN3_private/models/goban_v2_part{k}.pt", weights_only=False); P.append(M2["P"]); WORDS += M2["words"]
+    NVIEW, NVAL = 9, 45; P = torch.cat(P)
+else:
+    WORDS = M["words"]; NVIEW, NVAL = 5, 47; P = M["P"]
+WI = {w: i for i, w in enumerate(WORDS)}
+QWI = WI
+if COMMON:
+    other_words = set(M["words"]) if MODEL == "v2" else set(w for k in (0, 1) for w in torch.load(f"D:/AI_git/Sin-CNN3_private/models/goban_v2_part{k}.pt", weights_only=False)["words"])
+    QWI = {w: i for w, i in WI.items() if w in other_words}                                 # 問題に使う語（両方の語板にある語）
 with torch.no_grad():
-    B3 = torch.cat([run(M["P"][i:i + 5000], 5, 52) for i in range(0, len(WORDS), 5000)])
+    B3 = torch.cat([run(P[i:i + 5000], NVIEW, NVAL + NVIEW) for i in range(0, len(WORDS), 5000)])
 B3 = B3 / B3.sum(-1, keepdim=True).clamp(min=1e-12)                                         # (語, 観点, 値) の割合
 B = B3.reshape(len(WORDS), -1)                                                              # 1 語 = 260 個の明るさの模様
 # ---- 属性樹（実験65 の考え、2 万語） ----
-ATTR = [(v, x) for v in range(5) for x in range(47)]                                        # 属性 = (観点, 値)（その他は除く）
+ATTR = [(v, x) for v in range(NVIEW) for x in range(NVAL)]                                        # 属性 = (観点, 値)（その他は除く）
 prior = B3.mean(0)
 has = torch.stack([B3[:, v, x] >= max(0.05, 3 * float(prior[v, x])) for v, x in ATTR], 1)    # (語, 属性) 持つか
 nodes = [dict(depth=0, members=torch.arange(len(WORDS)), path=[])]                         # 根 = 全部の語
@@ -69,7 +82,7 @@ for d in docs:
     sents = [s for s in re.split(r"(?<=。)", d["text"].replace("\n", "")) if len(s) > 8]
     lines = []
     for k, s in enumerate(sents):
-        ns = sorted({m.normalized_form() for m in tok.tokenize(s[:500], MODE) if m.part_of_speech()[0] == "名詞" and m.part_of_speech()[1] == "普通名詞" and m.normalized_form() in WI})
+        ns = sorted({m.normalized_form() for m in tok.tokenize(s[:500], MODE) if m.part_of_speech()[0] == "名詞" and m.part_of_speech()[1] == "普通名詞" and m.normalized_form() in QWI})
         if len(ns) >= 2:
             lines.append((k * 4 // len(sents), ns))
     if len(lines) < 40:
@@ -103,6 +116,6 @@ for d in docs:
 res = {k: dict(top1=v[0] / n_q, top5=v[1] / n_q, MRR=v[2] / n_q) for k, v in hits.items()}
 res["問題の数"] = n_q; res["属性樹の節"] = len(nodes); res["sec"] = time.time() - t00
 with open("results/exp71.txt", "a", encoding="utf-8") as f:
-    f.write(json.dumps(dict(exp="71", **res), ensure_ascii=False) + "\n")
+    f.write(json.dumps(dict(exp="71", model=MODEL, common=COMMON, **res), ensure_ascii=False) + "\n")
 for k, v in res.items():
     print(k, {a: round(b, 4) for a, b in v.items()} if isinstance(v, dict) else v)

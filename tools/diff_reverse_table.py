@@ -34,9 +34,23 @@ def load(kind, nview):
     return M["words"], B3, views, names
 
 
+def load_v2():
+    """語板 v2（実験73、観点 9・値 45 + その他、名詞 3 万語。リフレッシュ側の 2 つの片方を合わせる）。"""
+    P = []; words = []
+    for k in (0, 1):
+        M = torch.load(f"D:/AI_git/Sin-CNN3_private/models/goban_v2_part{k}.pt", weights_only=False)
+        P.append(M["P"]); words += M["words"]
+    P = torch.cat(P); views = M["views"]; nv = len(views)
+    with torch.no_grad():
+        B3 = torch.cat([run(P[i:i + 5000], nv, 45 + nv) for i in range(0, len(words), 5000)])
+    B3 = B3 / B3.sum(-1, keepdim=True).clamp(min=1e-12)                                     # 観点ごとに割合に直す
+    names = {(j, r): f"{v} {x}" for j, v in enumerate(views) for x, r in M["pos"][v].items()}   # 出口の場所 → 値の名前（v2 は pos に場所が入っている）
+    return words, B3, views, names
+
+
 def tree(B3):
     """実験71 と同じ属性樹（共通の度合いの大きい属性で枝分かれ、深さ 4、枝 最大 6）。節: 道筋・仲間・融合した板・属性差グレイン。"""
-    W, V, X = B3.shape; ATTR = [(v, x) for v in range(V) for x in range(47)]
+    W, V, X = B3.shape; NVAL = X - V; ATTR = [(v, x) for v in range(V) for x in range(NVAL)]   # 「その他」（後ろの V 個）は枝分かれに使わない
     prior = B3.mean(0); has = torch.stack([B3[:, v, x] >= max(0.05, 3 * float(prior[v, x])) for v, x in ATTR], 1)
     nodes = [dict(depth=0, members=torch.arange(W), path=[], parent=None)]
 
@@ -87,9 +101,15 @@ for n, vs in _C.items():
             FREQ["動詞"][x] = FREQ["動詞"].get(x, 0) + m
 del _C
 norm = lambda w: _tok.tokenize(w)[0].normalized_form()                                     # 語板は正規形（林檎・饂飩）なので、表の語を正規形に直して探す
-for kind, pairs, nview in (("名詞", NOUN_PAIRS, 5), ("動詞", VERB_PAIRS, 4)):
-    words, B3, views, names = load(kind, nview); WI = {w: i for i, w in enumerate(words)}
-    other = torch.zeros(nview, 47 + nview, dtype=torch.bool); other[:, 47:] = True; other = other.reshape(-1)   # 観点ごとの「その他」の出口
+V2 = os.environ.get("V2") == "1"                                                           # V2=1: 語板 v2（実験73、名詞だけ）で作り直す
+if V2:
+    import pickle
+    FREQ["名詞"] = pickle.load(open("D:/AI_git/Sin-CNN3_private/data/views/merged2.pkl", "rb"))["noun_total"]   # v2 の材料での語の多さ
+    out[2] = "持ち主の依頼（2026-10-29）。作り方は tools/diff_reverse_table.py（V2=1）。語板は**語板 v2**（実験73、観点 9 = どんな・を・が・で・に・の前・の後・と・は、名詞 3 万語）。v1（観点 5）の表は [diff_reverse_table.md](diff_reverse_table.md)。"
+for kind, pairs, nview in ((("名詞", NOUN_PAIRS, 9),) if V2 else (("名詞", NOUN_PAIRS, 5), ("動詞", VERB_PAIRS, 4))):
+    words, B3, views, names = load_v2() if V2 else load(kind, nview); WI = {w: i for i, w in enumerate(words)}
+    NVAL = B3.shape[-1] - nview                                                              # 値の出口の数（v1 は 47、v2 は 45）
+    other = torch.zeros(nview, NVAL + nview, dtype=torch.bool); other[:, NVAL:] = True; other = other.reshape(-1)   # 観点ごとの「その他」の出口
     nodes = tree(B3); flat = B3.reshape(len(words), -1)
     out += [f"## {kind}（語板 {len(words)} 語、属性樹の節 {len(nodes)}）", "", "| A − B | 光の像（強い所） | 逆から入れて反応した語 | 属性樹の幹（道筋） | 幹の仲間 |", "|---|---|---|---|---|"]
     n_ok = 0
@@ -98,7 +118,7 @@ for kind, pairs, nview in (("名詞", NOUN_PAIRS, 5), ("動詞", VERB_PAIRS, 4))
         if a not in WI or b not in WI:
             out.append(f"| {a0} − {b0} | （語板がない: {', '.join(x for x in (a, b) if x not in WI)}） | | | |"); continue
         D = (flat[WI[a]] - flat[WI[b]]).clamp(min=0); D[other] = 0                            # 光の像の正の所（「その他」は中身が分からないので使わない）
-        top_attr = [names.get(divmod(int(k), 47 + nview), "その他") for k in torch.argsort(D, descending=True)[:3]]
+        top_attr = [names.get(divmod(int(k), NVAL + nview), "その他") for k in torch.argsort(D, descending=True)[:3]]
         fq = torch.tensor([math.log(2 + FREQ[kind].get(w, 0)) for w in words])
         sc = (flat @ D) * fq; sc[WI[a]] = sc[WI[b]] = -1                                     # 逆から入れて戻る光（重なり）× よく出る度合い（P(語 | 像) ∝ P(像 | 語) P(語)）
         resp = [words[int(k)] for k in torch.argsort(sc, descending=True)[:5]]
@@ -110,5 +130,5 @@ for kind, pairs, nview in (("名詞", NOUN_PAIRS, 5), ("動詞", VERB_PAIRS, 4))
         mates = [words[int(mem[k])] for k in torch.argsort(ms, descending=True)[:7] if words[int(mem[k])] not in (a, b)][:5]
         out.append(f"| {a0} − {b0} | {'・'.join(top_attr)} | {'・'.join(resp)} | {trunk} | {'・'.join(mates)}（{len(mem)} 語） |"); n_ok += 1
     out.append(""); print(kind, n_ok, "組", flush=True)
-open("docs/diff_reverse_table.md", "w", encoding="utf-8").write("\n".join(out) + "\n")
+open("docs/diff_reverse_table_v2.md" if V2 else "docs/diff_reverse_table.md", "w", encoding="utf-8").write("\n".join(out) + "\n")
 print("\n".join(out[:30]))
