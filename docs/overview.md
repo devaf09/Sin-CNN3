@@ -103,6 +103,8 @@
 
 ## 6. もっと読む
 
+- [docs/fusion_explained.md](fusion_explained.md): 融合の試験の手順と、試した形（図つき）
+
 - [docs/plan_large_scale.md](plan_large_scale.md): 大規模な学習の計画（案）
 
 - [docs/explain_20261027.md](explain_20261027.md): 重ね合わせの限界と、規模を広げたときの話（図つき）
