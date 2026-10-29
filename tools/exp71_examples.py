@@ -9,14 +9,22 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from goban_batch import run
 
 sys.stdout.reconfigure(encoding="utf-8"); torch.set_num_threads(4); t00 = time.time()
-M = torch.load("D:/AI_git/Sin-CNN3_private/models/goban_名詞_seed0.pt", weights_only=False)
-WORDS = M["words"]; WI = {w: i for i, w in enumerate(WORDS)}
+MODEL = os.environ.get("MODEL", "v1")                                                       # v1（実験59、観点 5）/ v2（実験73、観点 9）。v2 は例のページの末尾に追記する
+if MODEL == "v2":
+    Ps = []; WORDS = []
+    for k in (0, 1):                                                                        # 語板 v2 は 2 つに分けて学んだので合わせる
+        M = torch.load(f"D:/AI_git/Sin-CNN3_private/models/goban_v2_part{k}.pt", weights_only=False); Ps.append(M["P"]); WORDS += M["words"]
+    NVIEW, NVAL = 9, 45; PP = torch.cat(Ps)
+else:
+    M = torch.load("D:/AI_git/Sin-CNN3_private/models/goban_名詞_seed0.pt", weights_only=False)
+    WORDS = M["words"]; NVIEW, NVAL = 5, 47; PP = M["P"]
+WI = {w: i for i, w in enumerate(WORDS)}
 with torch.no_grad():
-    B3 = torch.cat([run(M["P"][i:i + 5000], 5, 52) for i in range(0, len(WORDS), 5000)])
+    B3 = torch.cat([run(PP[i:i + 5000], NVIEW, NVAL + NVIEW) for i in range(0, len(WORDS), 5000)])
 B3 = B3 / B3.sum(-1, keepdim=True).clamp(min=1e-12)                                         # (語, 観点, 値) の割合
 B = B3.reshape(len(WORDS), -1)                                                              # 1 語 = 260 個の明るさの模様
 # ---- 属性樹（実験65 の考え、2 万語） ----
-ATTR = [(v, x) for v in range(5) for x in range(47)]                                        # 属性 = (観点, 値)（その他は除く）
+ATTR = [(v, x) for v in range(NVIEW) for x in range(NVAL)]                                        # 属性 = (観点, 値)（その他は除く）
 prior = B3.mean(0)
 has = torch.stack([B3[:, v, x] >= max(0.05, 3 * float(prior[v, x])) for v, x in ATTR], 1)    # (語, 属性) 持つか
 nodes = [dict(depth=0, members=torch.arange(len(WORDS)), path=[])]                         # 根 = 全部の語
@@ -50,8 +58,12 @@ smooth = {a: (1 - a) * B + a * fused[deep] for a in (0.3, 0.5)}                 
 
 # ---- 有名な小説で、連想元と連想先の行を例として出す ----
 NV = M["vals"]; VIEWS = list(NV.keys())
+INV = {(j, r): x for j, v in enumerate(VIEWS) for x, r in M["pos"][v].items()} if MODEL == "v2" else {}   # v2: 出口の場所 → 値
 def attr_name(a):
-    v, x = ATTR[a]; r = (x - 9 * v) % 47
+    v, x = ATTR[a]
+    if MODEL == "v2":
+        return f"{VIEWS[v]} {INV.get((v, x), '?')}"
+    r = (x - 9 * v) % 47
     return f"{VIEWS[v]} {NV[VIEWS[v]][r]}" if r < len(NV[VIEWS[v]]) else f"{VIEWS[v]} ?"
 node_name = lambda j: " → ".join(attr_name(a) for a in nodes[j]["path"]) or "根"
 from sudachipy import Dictionary, SplitMode
@@ -95,5 +107,11 @@ for title in BOOKS:
         cut = lambda s: ((s[:70] + "…") if len(s) > 70 else s).replace("|", "｜")       # 表が崩れないよう、縦棒は全角に
         out.append(f"| {w} | {cut(lines[a][2])}（{lines[a][0] + 1}） | {cut(lines[b][2])}（{lines[b][0] + 1}）{'（同じ語を含む）' if w in lines[b][1] else ''} | {'<br>'.join(node_name(j) for j in js) or '−'} |")
     out.append("")
-open("docs/examples_71.md", "w", encoding="utf-8").write(chr(10).join(out) + chr(10))
+if MODEL == "v2":                                                                           # 例のページの末尾に、語板 v2 の節として追記（持ち主「連想の例は試験のたびに追記」）
+    body = [("#" + l if l.startswith("#") else l) for l in out[1:]]                          # 見出しを 1 段下げる
+    body[0:4] = ["", "# 語板 v2 で作り直した例（2026-10-30、観点 9 = どんな・を・が・で・に・の前・の後・と・は、名詞 3 万語）", "",
+                 "同じ作り方で、語板と属性樹を v2 にした。同じ問題での比べ（1200 問）: 木の道筋の目印 top-1 4.0% → 5.3%、top-5 6.0% → 6.8%。", ""]
+    open("docs/examples_71.md", "a", encoding="utf-8").write(chr(10).join(body) + chr(10))
+else:
+    open("docs/examples_71.md", "w", encoding="utf-8").write(chr(10).join(out) + chr(10))
 print(chr(10).join(out[:40]))
