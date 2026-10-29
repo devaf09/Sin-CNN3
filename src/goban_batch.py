@@ -49,15 +49,23 @@ def init_plates(n, seed=0, dev="cpu", rows=N, plates=K):
     return (math.pi * (torch.rand(n, rows, plates, generator=g) < 0.5).float()).to(dev)
 
 
-def train(target, use, steps=600, seed=0, P0=None, lr=0.01, dev="cpu", rows=N, plates=K):
+def train(target, use, steps=600, seed=0, P0=None, lr=0.01, dev="cpu", rows=N, plates=K, log=None, log_idx=(), hook=None, hook_steps=()):
     """target の割合に合わせて語板をまとめて学習する。P0 を渡すとそこから始める（近い語板を写したときなど）。
-    rows・plates: まっさらから始めるときの器の大きさ（縦・板の数）。"""
+    rows・plates: まっさらから始めるときの器の大きさ（縦・板の数）。
+    学習曲線（実験75、持ち主の依頼 2026-10-30）:
+      log: リストを渡すと、毎回の学習の損失（全部の語の平均）と、log_idx の語（何枚かの語板）それぞれの損失を足していく。
+      hook: hook(回数, 板) を hook_steps の回数のときに呼ぶ（途中の板で確かめ用の当たりを測るため）。"""
     nv, nx = target.shape[1], target.shape[2]
     P = torch.nn.Parameter((init_plates(target.shape[0], seed, dev, rows, plates) if P0 is None else P0.clone()).to(dev))
     opt = torch.optim.Adam([P], lr=lr); q = torch.cat([target, torch.zeros(*target.shape[:2], 1)], -1).to(dev); m = use.to(dev)
-    for _ in range(steps):
+    for t in range(1, steps + 1):
         W = run(P, nv, nx); p = torch.cat([W, (1 - W.sum(-1, keepdim=True)).clamp(min=1e-9)], -1)
-        loss = -(q * torch.log(p + 1e-9)).sum(-1)[m].mean(); opt.zero_grad(); loss.backward(); opt.step()
+        lw = -(q * torch.log(p + 1e-9)).sum(-1)                                             # (語, 観点) の損失（交差エントロピー、自然対数）
+        loss = lw[m].mean(); opt.zero_grad(); loss.backward(); opt.step()
+        if log is not None:
+            log.append([float(loss)] + [float(lw[i][m[i]].mean()) for i in log_idx])        # 全体の平均 + 選んだ語板それぞれ
+        if hook is not None and t in hook_steps:
+            hook(t, P.detach())
     return P.detach()
 
 
