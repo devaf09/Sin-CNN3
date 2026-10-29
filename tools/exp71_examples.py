@@ -72,7 +72,7 @@ for title in BOOKS:
     zid, author = idx[title]; text = texts.get(zid)
     if not text:
         continue
-    sents = [s for s in re.split(r"(?<=。)", text.replace(chr(10), "").replace("　", "")) if len(s) > 8 and "---" not in s and "テキスト中" not in s and "底本" not in s]   # 作品の頭・終わりの説明は除く
+    sents = [s for s in re.split(r"(?<=。)", text.replace(chr(13), "").replace(chr(10), "").replace("　", "")) if len(s) > 8 and "---" not in s and "テキスト中" not in s and "底本" not in s]   # 作品の頭・終わりの説明は除く
     lines = []
     for k, s in enumerate(sents):
         ns = sorted({m.normalized_form() for m in tok.tokenize(s[:500], MODE) if m.part_of_speech()[0] == "名詞" and m.part_of_speech()[1] == "普通名詞" and m.normalized_form() in WI})
@@ -92,7 +92,7 @@ for title in BOOKS:
         S = torch.nn.functional.cosine_similarity(torch.stack([feat(li) for li in ids]), qa[None], dim=1); b = ids[int(S.argmax())]
         shared = (tag[[WI[x] for x in lines[a][1] if x != w]].amax(0) > 0) & (tag[[WI[x] for x in lines[b][1] if x != w]].amax(0) > 0)
         js = sorted([j for j in torch.nonzero(shared).flatten().tolist() if nodes[j]["depth"] > 0], key=lambda j: -nodes[j]["depth"])[:2]
-        cut = lambda s: (s[:70] + "…") if len(s) > 70 else s
+        cut = lambda s: ((s[:70] + "…") if len(s) > 70 else s).replace("|", "｜")       # 表が崩れないよう、縦棒は全角に
         out.append(f"| {w} | {cut(lines[a][2])}（{lines[a][0] + 1}） | {cut(lines[b][2])}（{lines[b][0] + 1}）{'（同じ語を含む）' if w in lines[b][1] else ''} | {'<br>'.join(node_name(j) for j in js) or '−'} |")
     out.append("")
 open("docs/examples_71.md", "w", encoding="utf-8").write(chr(10).join(out) + chr(10))
