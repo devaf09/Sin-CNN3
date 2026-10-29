@@ -28,6 +28,7 @@ ap.add_argument("--device", default="cpu")
 ap.add_argument("--steps", type=int, default=1000)
 ap.add_argument("--min", type=int, default=30)                                            # 合成語の学習用の数（重み付き）がこれ以上のものだけ語板にする
 ap.add_argument("--out", default="results/exp74.txt")
+ap.add_argument("--direction_only", action="store_true")                                  # 向きの決定だけ（語板は学ばない）
 a = ap.parse_args()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from goban_batch import train, run, prob, evaluate
@@ -96,7 +97,13 @@ if a.set == "a":
             if x in TRP and y in TRP.get(x, {}).get("の後", {}):
                 parents[x]["後"].append(key)                                                 # 「[x] の y」= 親 x の後ろにつなげる
     rows = []
+    SKIP = set("こと 物 所 方 事 為 訳 時 中 前 後 内 外 上 下 他 気 感じ 一緒 自分 仕方 様 辺 程 頃 間 度 位 際 通り 儘 序で 筈 振り 積もり 以上 以外 場合 本当 皆 皆さん 今日 今 昨日 明日 先 次 横 側".split())
     for n, dd in parents.items():
+        if n in SKIP:
+            continue                                                                        # 形式名詞（中・他 など）は語板 v2 にない（実験73 と同じ）
+        # 親自身の上位 3 の相手だけ（ほかの親の候補として入った組は除く）: 親の「の前」「の後」の数が多い順
+        dd = {"前": sorted(dd["前"], key=lambda k: -TRP[n].get("の前", {}).get(k.split("の")[0], 0))[:3],
+              "後": sorted(dd["後"], key=lambda k: -TRP[n].get("の後", {}).get(k.split("の", 1)[1], 0))[:3]}
         if not dd["前"] or not dd["後"]:
             continue                                                                        # 両方の向きの候補がある親だけ比べる
         pm = mass(TRP[n], ATTRV)
@@ -127,6 +134,10 @@ if a.set == "a":
     json.dump(rows, open(f"{PRIV}/data/views/compound_direction.json", "w", encoding="utf-8"), ensure_ascii=False)
     print("向き", res["向き"], flush=True)
 
+if a.direction_only:
+    with open(a.out, "a", encoding="utf-8") as f:
+        f.write(json.dumps(res, ensure_ascii=False) + "\n")
+    sys.exit(0)
 # ---- 2. 合成の語板（親の語板 v2 から学び直す = 差分） ----
 G = {}
 for k in (0, 1):                                                                            # 語板 v2（実験73、リフレッシュ側）の 2 つの片方を合わせる
