@@ -22,7 +22,7 @@ else:
     docs = [json.loads(l) for l in open(f"{PRIV}/data/text/aozora_full.jsonl", encoding="utf-8")]
     rnd = random.Random(0); test = [d for d in docs if 30000 < len(d["text"]) < 300000]; rnd.shuffle(test)
     used = set(d["id"] for d in test[:60])                                                  # 実験76 の問題に使った 60 作品は除く
-    rest = [d for d in docs if d["id"] not in used and len(d["text"]) > 5000]; random.Random(1).shuffle(rest); docs = rest[:600]
+    rest = [d for d in docs if d["id"] not in used and len(d["text"]) > 5000]; random.Random(1).shuffle(rest); docs = rest[:int(os.environ.get("NDOC", "600"))]                # NDOC: 使う作品の数（実験77 は全部）
     split = lambda d: [s for s in re.split(r"(?<=。)", d["text"].replace("\r", "").replace("\n", "").replace("　", "")) if len(s) > 8]
 N = collections.defaultdict(collections.Counter); TOT = collections.Counter()
 for i, d in enumerate(docs):
