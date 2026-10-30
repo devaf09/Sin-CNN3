@@ -43,6 +43,18 @@ def run(P, n_views, n_vals):
     return torch.fft.fft(u[..., :n], dim=-1, norm="ortho").abs()[..., VAL0:VAL0 + n_vals] ** 2   # 出口 = 周波数で読む
 
 
+def field(P, n_views, n_vals):
+    """run と同じ光の通し方で、出口の明るさではなく複素の光（位相込み）を返す: (語, 観点, 値)。
+    光を逆に入れたときの反応（位相込みの重なり）を測るため（実験76d、持ち主 2026-10-30）。"""
+    dev = P.device; n, k_pl = P.shape[1], P.shape[2]
+    H = _h(dev, n); u0 = _views(n_views, n, dev)
+    u = torch.nn.functional.pad(u0, (0, n))[None].expand(P.shape[0], -1, -1)
+    for k in range(k_pl):
+        u = torch.cat([u[..., :n] * torch.exp(1j * P[:, None, :, k]), u[..., n:]], -1)
+        u = torch.fft.ifft(torch.fft.fft(u, dim=-1, norm="ortho") * H, dim=-1, norm="ortho")
+    return torch.fft.fft(u[..., :n], dim=-1, norm="ortho")[..., VAL0:VAL0 + n_vals]       # |field|² = run の値
+
+
 def init_plates(n, seed=0, dev="cpu", rows=N, plates=K):
     """2 値（0 か π）の初期板（学び 45 で最も速い）。rows・plates で器の大きさを変えられる（実験75）。"""
     g = torch.Generator().manual_seed(seed)

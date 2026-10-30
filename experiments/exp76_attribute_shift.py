@@ -28,7 +28,7 @@ import collections, json, math, os, pickle, random, re, sys, time
 import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from goban_batch import run
+from goban_batch import run, field
 
 sys.stdout.reconfigure(encoding="utf-8"); torch.set_num_threads(4); t00 = time.time()
 PRIV = "D:/AI_git/Sin-CNN3_private"
@@ -42,6 +42,13 @@ VIEWS = M["views"]; NVIEW, NVAL = 9, 45; WI = {w: i for i, w in enumerate(WORDS)
 INV = {(j, r): x for j, v in enumerate(VIEWS) for x, r in M["pos"][v].items()}            # 出口の場所 → 値の名前
 with torch.no_grad():
     P = torch.cat(Ps); B3 = torch.cat([run(P[i:i + 1500], NVIEW, NVAL + NVIEW) for i in range(0, len(WORDS), 1500)])
+# 光を逆に入れる（持ち主 2026-10-30「一番高い属性ではなく、語板の出力光をそのまま逆に入れて反応が高い語板を探す」）:
+#   語 w の出口の光 E_w を、語板 k の出口に逆から入れると、入口の観点 v に戻る光 = |⟨k の観点 v の出口の光, E_w の観点 v⟩|²（光の通り道は逆にもたどれる）。
+#   「明るさ」版は位相を見ない（明るさどうしの内積）、「位相込み」版は複素の光の内積。どちらも「その他」を含む出口全部。
+with torch.no_grad():
+    FF = torch.cat([field(P[i:i + 1500], NVIEW, NVAL + NVIEW) for i in range(0, len(WORDS), 1500)])   # (語, 観点, 出口) 複素の光
+IRAW = FF.abs() ** 2
+FFn = (FF[..., :NVAL].abs() ** 2).sum(-1)                                                   # (語, 観点) 値の出口に来た光の量                                                                        # 出口の明るさ（割合にしない、そのままの光）
 B3 = B3 / B3.sum(-1, keepdim=True).clamp(min=1e-12)                                         # (語, 観点, 出口) 観点ごとの割合
 A3 = B3[:, :, :NVAL]                                                                        # 属性 = 値の出口だけ（「その他」は中身が分からないので除く）
 FL = A3.reshape(len(WORDS), -1)                                                             # 1 語 = 9 × 45 = 405 個の属性の明るさ
@@ -211,19 +218,34 @@ def one_arm_rel(w, k=4, ksd=3.0):
 # ---- 問題: 青空文庫の続いた 3 文 ----
 from sudachipy import Dictionary, SplitMode
 tok = Dictionary(dict="core").tokenizer(); MODE = SplitMode.C
-docs = [json.loads(l) for l in open(f"{PRIV}/data/text/aozora_full.jsonl", encoding="utf-8")]
-rnd = random.Random(0); docs = [d for d in docs if 30000 < len(d["text"]) < 300000]; rnd.shuffle(docs); docs = docs[:60]
+# SOURCE=conv（持ち主 2026-10-30「文脈に影響を受けにくい、接近した会話で試す」）: 今の言葉の雑談・相談（RealPersonaChat・JMultiWOZ、CC BY-SA 4.0）の、
+#   語板の学習に使っていない側（確かめ用 = 対話の id の crc32 が 10 で割り切れるもの）の、続いた 3 発話。発話は短いので、名詞は 1 つ以上で良い。
+import zlib
+SOURCE = os.environ.get("SOURCE", "aozora"); MIN_N = 1 if SOURCE == "conv" else 2
+_adj = f"{PRIV}/data/views/adjacent_{SOURCE}.pkl"
+ADJ = pickle.load(open(_adj, "rb")) if os.path.exists(_adj) else None                       # 上限の目安の表（あれば使う）
+ADJP = {y: m / sum(ADJ["TOT"].values()) for y, m in ADJ["TOT"].items()} if ADJ else {}
+if SOURCE == "conv":
+    docs = [d for d in map(json.loads, open(f"{PRIV}/data/text/conv_all.jsonl", encoding="utf-8"))
+            if not d["id"].startswith("aozora") and zlib.crc32(f"conv:{d['id']}".encode()) % 10 == 0]
+    rnd = random.Random(0); rnd.shuffle(docs)
+else:
+    docs = [json.loads(l) for l in open(f"{PRIV}/data/text/aozora_full.jsonl", encoding="utf-8")]
+    rnd = random.Random(0); docs = [d for d in docs if 30000 < len(d["text"]) < 300000]; rnd.shuffle(docs); docs = docs[:60]
 nouns = lambda s: sorted({m.normalized_form() for m in tok.tokenize(s[:500], MODE) if m.part_of_speech()[0] == "名詞" and m.part_of_speech()[1] == "普通名詞" and m.normalized_form() in WI})
 stats = collections.defaultdict(float); n_q = 0; ex = []; LIST = []
 rk = lambda x: torch.argsort(torch.argsort(-x)).float()                                     # 大きい順の順位（0 から）
 g = torch.Generator().manual_seed(0)
 for d in docs:
-    sents = [s for s in re.split(r"(?<=。)", d["text"].replace("\r", "").replace("\n", "").replace("　", "")) if len(s) > 8 and "---" not in s and "底本" not in s and "テキスト中" not in s]   # 作品の頭・終わりの説明は除く
+    if SOURCE == "conv":
+        sents = [x.strip() for x in d["text"].split("\n") if x.strip()]                      # 1 発話 = 1 行
+    else:
+        sents =[s for s in re.split(r"(?<=。)", d["text"].replace("\r", "").replace("\n", "").replace("　", "")) if len(s) > 8 and "---" not in s and "底本" not in s and "テキスト中" not in s]   # 作品の頭・終わりの説明は除く
     NS = [nouns(s) for s in sents]
     picked = 0
-    for k in range(1, len(sents) - 1, 7):                                                   # 7 文おきに、続いた 3 文
+    for k in range(1, len(sents) - 1, 3 if SOURCE == "conv" else 7):                                                   # 7 文おきに、続いた 3 文
         nB, nC, nD = NS[k - 1], NS[k], NS[k + 1]
-        if len(nB) < 2 or len(nC) < 2 or len(nD) < 2 or picked >= 25:
+        if len(nB) < MIN_N or len(nC) < MIN_N or len(nD) < MIN_N or picked >= (3 if SOURCE == "conv" else 25) or n_q >= 1500:
             continue
         cset = set(nC) - set(nB) - set(nD)                                                 # B・D に出ない C の名詞を当てる（同じ語を探すだけにならないように）
         if not cset:
@@ -254,6 +276,33 @@ for d in docs:
             sc[f"log 多さ + {beta} × (融合 + 流れ)"] = lpw + beta * z(z(s_fuse) + z(s_flow))
         # 3. 後方への属性変位: B に (D − B) の半分を足した像（前と後ろの途中）
         sc["B + (D − B)/2（属性変位の像）"] = torch.nn.functional.cosine_similarity(FL, (FL[iB].mean(0) + 0.5 * (FL[iD].mean(0) - FL[iB].mean(0)))[None], dim=1) * logf
+        rev_i = (IRAW.reshape(len(WORDS), -1) @ IRAW[iB + iD].reshape(len(iB + iD), -1).sum(0))   # 逆入れ（明るさ）: B・D の語の光を足して、各語板に逆から
+        rev_c = torch.zeros(len(WORDS))
+        for w in iB + iD:                                                                   # 逆入れ（位相込み）: 語ごとに複素の光を逆に入れ、戻る明るさを足す（語どうしは明るさで足す = 融合）
+            for v in range(NVIEW):
+                rev_c += (FF[:, v, :] @ FF[w, v, :].conj()).abs() ** 2
+        rev_v = torch.zeros(len(WORDS))                                                     # 逆入れ（位相込み・その他を除く）: 値の出口だけを逆に入れる（「その他」の明るさに引っ張られないように）
+        for w in iB + iD:
+            for v in range(NVIEW):
+                rev_v += (FF[:, v, :NVAL] @ FF[w, v, :NVAL].conj()).abs() ** 2 / (FFn[:, v] * FFn[w, v]).clamp(min=1e-12)   # 光の強さでならす（明るい語板ばかり選ばないよう）
+        sc["逆入れ（明るさ）"] = rev_i; sc["逆入れ（位相込み）"] = rev_c; sc["逆入れ（位相込み・その他を除く）"] = rev_v
+        sc["log 多さ + 0.5 × 逆入れ（その他を除く）"] = lpw + 0.5 * z(rev_v)
+        sc["log 多さ + 0.5 × (逆入れ（その他を除く）+ 流れ)"] = lpw + 0.5 * z(z(rev_v) + z(s_flow))
+        sc["log 多さ + 0.5 × 逆入れ（明るさ）"] = lpw + 0.5 * z(rev_i); sc["log 多さ + 0.5 × 逆入れ（位相込み）"] = lpw + 0.5 * z(rev_c)
+        sc["log 多さ + 0.5 × (逆入れ（位相込み）+ 流れ)"] = lpw + 0.5 * z(z(rev_c) + z(s_flow))
+        if ADJ is not None:                                                                 # 上限の目安: 光を使わない数え方（隣の文に一緒に出た名詞の表、exp76_ceiling_table.py）
+            pmi = torch.zeros(len(WORDS)); cnt = torch.zeros(len(WORDS))
+            for x in nB + nD:
+                row = ADJ["N"].get(x)
+                if not row:
+                    continue
+                rs = sum(row.values())
+                for y, m in row.items():
+                    j = WI.get(y)
+                    if j is not None:
+                        cnt[j] += m; pmi[j] += math.log((m + 0.1) / (rs * ADJP.get(y, 1e-9)))   # たまたまより何倍多く隣に出たか（log）
+            sc["数え方: 隣に出た回数（上限の目安）"] = cnt + 1e-6 * logf
+            sc["数え方: 隣に出た PMI（上限の目安）"] = pmi + 1e-6 * logf
         sc["B だけ"] = torch.nn.functional.cosine_similarity(FL, FL[iB].mean(0)[None], dim=1) * logf
         sc["D だけ"] = torch.nn.functional.cosine_similarity(FL, FL[iD].mean(0)[None], dim=1) * logf
         excl = set(iB + iD + iC)
@@ -319,7 +368,7 @@ for d in docs:
                            arm=f"{wD}: {'・'.join(cD)} ／ {wB}: {'・'.join(cB)}", order="・".join(order), cset="・".join(sorted(cset))))
 res = {k: v / n_q for k, v in stats.items()}; res["問題の数"] = n_q; res["属性樹の節"] = len(nodes); res["sec"] = time.time() - t00
 with open("results/exp76.txt", "a", encoding="utf-8") as f:
-    f.write(json.dumps(dict(exp=TAG, model=MODEL, deep=DEEP, mesh=MESH, **res), ensure_ascii=False) + "\n")
+    f.write(json.dumps(dict(exp=TAG, model=MODEL, deep=DEEP, mesh=MESH, source=SOURCE, **res), ensure_ascii=False) + "\n")
 lines = ["# 前後からの属性変位の例（実験76）", "", "持ち主の構想（2026-10-30）。前の文 B と後ろの文 D から、間の文 C を作る属性（属性の流れ）と語板の列を集めた。作り方: experiments/exp76_attribute_shift.py。",
          "1 作品から 1 例。「C の名詞」は B・D に出ない C の名詞（当てたいもの）。「1 腕先の語板」は、B・D のいちばん珍しい名詞の「の前・の後・と」の値で、語板を持つ語 4 つずつ。", "",
          "| 文 | 属性の流れ（D → B、先頭 8） | 1 腕先の語板（D の語: … ／ B の語: …） | 語板の列 | C の名詞 |", "|---|---|---|---|---|"]
