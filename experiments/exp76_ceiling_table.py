@@ -14,7 +14,11 @@ PRIV = "D:/AI_git/Sin-CNN3_private"; SOURCE = os.environ.get("SOURCE", "aozora")
 WI = set(w for k in (0, 1) for w in torch.load(f"{PRIV}/models/goban_v3_part{k}_scratch.pt", weights_only=False)["words"])
 tok = Dictionary(dict="core").tokenizer(); MODE = SplitMode.C
 nouns = lambda s: {m.normalized_form() for m in tok.tokenize(s[:500], MODE) if m.part_of_speech()[0] == "名詞" and m.part_of_speech()[1] == "普通名詞" and m.normalized_form() in WI}
-if SOURCE == "conv":
+WSPLIT = lambda t: [s for x in t.split("\n") for s in re.split(r"(?<=[。！？])", x) if len(s.strip()) > 1]   # 行と「。！？」で文に分ける
+if SOURCE == "web3":                                                                        # 持ち主が集めた Web 小説（実験だけ、2026-10-31）。学習用の側（話の id の crc32 が 10 で割り切れないもの）
+    docs = [d for d in map(json.loads, open(f"{PRIV}/data/text/webnovels3.jsonl", encoding="utf-8")) if zlib.crc32(d["id"].encode()) % 10 != 0]
+    split = lambda d: WSPLIT(d["text"])
+elif SOURCE == "conv":
     docs = [d for d in map(json.loads, open(f"{PRIV}/data/text/conv_all.jsonl", encoding="utf-8"))
             if not d["id"].startswith("aozora") and zlib.crc32(f"conv:{d['id']}".encode()) % 10 != 0]       # 確かめ用（% 10 == 0）は使わない
     split = lambda d: [x.strip() for x in d["text"].split("\n") if x.strip()]

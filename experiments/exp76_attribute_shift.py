@@ -228,7 +228,10 @@ FAST = os.environ.get("FAST") == "1"
 _nx = f"{PRIV}/models/goban_next_{SOURCE}.pt"
 NEXT = torch.load(_nx, weights_only=False) if os.environ.get("NEXT") == "1" and os.path.exists(_nx) else None   # 実験77 の語板（同じ語の並び = 語板 v3）
 ADJP = {y: m / sum(ADJ["TOT"].values()) for y, m in ADJ["TOT"].items()} if ADJ else {}
-if SOURCE == "conv":
+if SOURCE == "web3":                                                                        # 持ち主が集めた Web 小説（実験だけ）の確かめ用の側の話（crc32 % 10 == 0）
+    docs = [d for d in map(json.loads, open(f"{PRIV}/data/text/webnovels3.jsonl", encoding="utf-8")) if zlib.crc32(d["id"].encode()) % 10 == 0]
+    rnd = random.Random(0); rnd.shuffle(docs)
+elif SOURCE == "conv":
     docs = [d for d in map(json.loads, open(f"{PRIV}/data/text/conv_all.jsonl", encoding="utf-8"))
             if not d["id"].startswith("aozora") and zlib.crc32(f"conv:{d['id']}".encode()) % 10 == 0]
     rnd = random.Random(0); rnd.shuffle(docs)
@@ -240,7 +243,9 @@ stats = collections.defaultdict(float); n_q = 0; ex = []; LIST = []
 rk = lambda x: torch.argsort(torch.argsort(-x)).float()                                     # 大きい順の順位（0 から）
 g = torch.Generator().manual_seed(0)
 for d in docs:
-    if SOURCE == "conv":
+    if SOURCE == "web3":
+        sents = [x for t in d["text"].split("\n") for x in re.split(r"(?<=[。！？])", t) if len(x.strip()) > 8]   # 行と「。！？」で文に分ける
+    elif SOURCE == "conv":
         sents = [x.strip() for x in d["text"].split("\n") if x.strip()]                      # 1 発話 = 1 行
     else:
         sents =[s for s in re.split(r"(?<=。)", d["text"].replace("\r", "").replace("\n", "").replace("　", "")) if len(s) > 8 and "---" not in s and "底本" not in s and "テキスト中" not in s]   # 作品の頭・終わりの説明は除く
@@ -248,7 +253,7 @@ for d in docs:
     picked = 0
     for k in range(1, len(sents) - 1, 3 if SOURCE == "conv" else 7):                                                   # 7 文おきに、続いた 3 文
         nB, nC, nD = NS[k - 1], NS[k], NS[k + 1]
-        if len(nB) < MIN_N or len(nC) < MIN_N or len(nD) < MIN_N or picked >= (3 if SOURCE == "conv" else 25) or n_q >= 1500:
+        if len(nB) < MIN_N or len(nC) < MIN_N or len(nD) < MIN_N or picked >= {"conv": 3, "web3": 2}.get(SOURCE, 25) or n_q >= 1500:
             continue
         cset = set(nC) - set(nB) - set(nD)                                                 # B・D に出ない C の名詞を当てる（同じ語を探すだけにならないように）
         if not cset:
