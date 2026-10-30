@@ -21,6 +21,10 @@ ap.add_argument("--nouns", type=int, default=30000)
 ap.add_argument("--device", default="cpu")
 ap.add_argument("--scratch", action="store_true")
 ap.add_argument("--out", default="results/exp73.txt")
+ap.add_argument("--rows", type=int, default=64)                                           # 器の縦（語板 v3 = 128、実験75）
+ap.add_argument("--plates", type=int, default=8)                                          # 板の枚数（語板 v3 = 16）
+ap.add_argument("--steps", type=int, default=2000)                                        # 学習の回数（語板 v3 = 500 で十分、実験75）
+ap.add_argument("--name", default="v2")                                                   # 保存名 goban_<name>_part<k>.pt
 a = ap.parse_args()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from goban_batch import train, run, prob, evaluate
@@ -55,26 +59,26 @@ tg = (TR + 20 * pri[None]) / (TR.sum(2, keepdim=True) + 20)
 print("表", len(WORDS), "語", f"{time.time() - t00:.0f} 秒", flush=True)
 # 初期の板: v1（実験59）の板があればそこから（リフレッシュ）、なければまっさら（2 値の板）
 from goban_batch import init_plates
-P0 = init_plates(len(WORDS), seed=a.part)
+P0 = init_plates(len(WORDS), seed=a.part, rows=a.rows, plates=a.plates)
 n_v1 = 0
-if not a.scratch:
+if not a.scratch and a.rows == 64 and a.plates == 8:                                       # v1 の板が使えるのは同じ大きさの器だけ
     v1 = torch.load("D:/AI_git/Sin-CNN3_private/models/goban_名詞_seed0.pt", weights_only=False)
     vi = {w: i for i, w in enumerate(v1["words"])}
     for i, n in enumerate(WORDS):
         if n in vi:
             P0[i] = v1["P"][vi[n]]; n_v1 += 1
 rows = []; P = P0
-B = 5000; done = 0
-for steps in (250, 250, 500, 1000):                                                        # 250・500・1000・2000 回の時点で当たりを測る
+B = 5000 if a.rows * a.plates <= 512 else 1500; done = 0                               # 大きな器は GPU のメモリに合わせて小分け
+for steps in {500: (250, 250), 1000: (250, 250, 500)}.get(a.steps, (250, 250, 500, 1000)):          # 250・500・1000・2000 回の時点で当たりを測る（--steps まで）
     P = torch.cat([train(tg[i:i + B], torch.ones(tg[i:i + B].shape[:2], dtype=torch.bool), steps, a.part + i + done, lr=0.03, P0=P[i:i + B], dev=dev).cpu() for i in range(0, len(WORDS), B)])
     done += steps
     W = torch.cat([run(P[i:i + B].to(dev), len(VIEWS), NV + len(VIEWS)).cpu() for i in range(0, len(WORDS), B)])
     ev = evaluate(prob(W), TE)
     rows.append(dict(steps=done, bits=ev["bits"], light=float(W.sum(-1).mean())))
     print(f"{done} 回: 当たり {ev['bits']:.3f}  光 {rows[-1]['light']:.3f}  {time.time() - t00:.0f} 秒", flush=True)
-res = dict(exp="73", part=a.part, words=len(WORDS), from_v1=n_v1, scratch=a.scratch, curve=rows, table=evaluate(tg, TE)["bits"],
+res = dict(exp="73", name=a.name, rows=a.rows, plates=a.plates, part=a.part, words=len(WORDS), from_v1=n_v1, scratch=a.scratch, curve=rows, table=evaluate(tg, TE)["bits"],
            no_word=evaluate(pri[None].expand(len(WORDS), -1, -1), TE)["bits"], sec=time.time() - t00, device=dev)
-torch.save(dict(P=P, words=WORDS, views=VIEWS, vals=VALS, pos=POS), f"D:/AI_git/Sin-CNN3_private/models/goban_v2_part{a.part}{'_scratch' if a.scratch else ''}.pt")
+torch.save(dict(P=P, words=WORDS, views=VIEWS, vals=VALS, pos=POS), f"D:/AI_git/Sin-CNN3_private/models/goban_{a.name}_part{a.part}{'_scratch' if a.scratch else ''}.pt")
 with open(a.out, "a", encoding="utf-8") as f:
     f.write(json.dumps(res, ensure_ascii=False) + "\n")
 print("表", round(res["table"], 3), "語を見ない", round(res["no_word"], 3), "v1 から", n_v1)
