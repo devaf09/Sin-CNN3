@@ -33,19 +33,22 @@ from goban_batch import run
 sys.stdout.reconfigure(encoding="utf-8"); torch.set_num_threads(4); t00 = time.time()
 PRIV = "D:/AI_git/Sin-CNN3_private"
 # ---- 語板 v2（2 つに分けて学んだものを合わせる） ----
+# 2 回目（実験76b、2026-10-30）の切り替え: MODEL=v3（語板 v3）、DEEP=1（流れに共通の属性を拾わない・1 腕先を相対の確信度で）、TAG=76b（出力の名前）
+MODEL = os.environ.get("MODEL", "v2"); DEEP = os.environ.get("DEEP") == "1"; TAG = os.environ.get("TAG", "76")
 Ps = []; WORDS = []
 for k in (0, 1):
-    M = torch.load(f"{PRIV}/models/goban_v2_part{k}.pt", weights_only=False); Ps.append(M["P"]); WORDS += M["words"]
+    M = torch.load(f"{PRIV}/models/goban_{MODEL}_part{k}{'_scratch' if MODEL == 'v3' else ''}.pt", weights_only=False); Ps.append(M["P"]); WORDS += M["words"]
 VIEWS = M["views"]; NVIEW, NVAL = 9, 45; WI = {w: i for i, w in enumerate(WORDS)}
 INV = {(j, r): x for j, v in enumerate(VIEWS) for x, r in M["pos"][v].items()}            # 出口の場所 → 値の名前
 with torch.no_grad():
-    P = torch.cat(Ps); B3 = torch.cat([run(P[i:i + 5000], NVIEW, NVAL + NVIEW) for i in range(0, len(WORDS), 5000)])
+    P = torch.cat(Ps); B3 = torch.cat([run(P[i:i + 1500], NVIEW, NVAL + NVIEW) for i in range(0, len(WORDS), 1500)])
 B3 = B3 / B3.sum(-1, keepdim=True).clamp(min=1e-12)                                         # (語, 観点, 出口) 観点ごとの割合
 A3 = B3[:, :, :NVAL]                                                                        # 属性 = 値の出口だけ（「その他」は中身が分からないので除く）
 FL = A3.reshape(len(WORDS), -1)                                                             # 1 語 = 9 × 45 = 405 個の属性の明るさ
 prior = FL.mean(0)                                                                          # 全体の割合（どの語にも多い属性を見分けるため）
 FREQ = pickle.load(open(f"{PRIV}/data/views/merged2.pkl", "rb"))["noun_total"]              # 語の多さ
 logf = torch.tensor([math.log(2 + FREQ.get(w, 0)) for w in WORDS])
+FORDER = torch.argsort(logf, descending=True).tolist(); FRANK = {j: r for r, j in enumerate(FORDER)}   # 語の多さの順位（多さをそろえた比べ用）
 aname = lambda a: f"{VIEWS[a // NVAL]} {INV.get((a // NVAL, a % NVAL), '?')}"              # 属性の番号 → 「観点 値」
 print("語板", len(WORDS), f"{time.time() - t00:.0f} 秒", flush=True)
 
@@ -72,6 +75,7 @@ def grow(i, used):
 
 grow(0, [])
 memsets = [set(nd["members"].tolist()) for nd in nodes]
+gen = has.float().mean(0)                                                                   # 属性を持つ語の割合（共通の度合い。大きいほど、どの語にもある属性）
 by_attr = collections.defaultdict(list)                                                     # 属性 → その属性で終わる節
 for j, nd in enumerate(nodes):
     if nd["attr"] is not None:
@@ -110,14 +114,54 @@ def side(ids):
     return leaves, (lca(leaves) if leaves else 0), ats
 
 
+# ---- 属性メッシュ（持ち主の案 2026-10-30「属性樹よりも属性メッシュが良かったかも」、MESH=1） ----
+# 属性どうしを「同じ語が一緒に持つ度合い」（cos = 両方を持つ語の数 ÷ √(片方ずつの数の積)）でつないだ網。
+# 道の長さ = −log(cos) + 5 × 入る属性の共通の度合い（多くの語が持つ属性 = を 為る・が 有る を通りにくくする）。
+MESH = os.environ.get("MESH") == "1"
+hf = has.float(); co = hf.T @ hf; na = hf.sum(0)                                            # (属性, 属性) 両方を持つ語の数、属性ごとの語の数
+cosm = co / torch.sqrt(na[:, None] * na[None, :]).clamp(min=1)
+COST = -torch.log(cosm.clamp(min=1e-9)) + 5 * gen[None, :]                                  # a → b の道の長さ
+COST[co < 5] = float("inf"); COST.fill_diagonal_(float("inf"))                              # 一緒に持つ語が 5 未満の組はつながない
+
+
+def mesh_path(a, b):
+    """網の上の a から b への最短の道（ダイクストラ法、属性 405 個なので素直に）。道の属性の並びを返す。"""
+    n = COST.shape[0]; dist = torch.full((n,), float("inf")); prev = [-1] * n; done = torch.zeros(n, dtype=torch.bool)
+    dist[a] = 0
+    for _ in range(n):
+        d2 = dist.clone(); d2[done] = float("inf"); u = int(d2.argmin())
+        if not math.isfinite(float(d2[u])) or u == b:
+            break
+        done[u] = True; nd = dist[u] + COST[u]; better = nd < dist
+        dist[better] = nd[better]
+        for v in torch.nonzero(better).flatten().tolist():
+            prev[v] = u
+    if not math.isfinite(float(dist[b])):
+        return [a, b]                                                                       # つながらなければ両端だけ
+    path = [b]
+    while path[-1] != a:
+        path.append(prev[path[-1]])
+    return list(reversed(path))
+
+
 def flow(idsD, idsB):
-    """前後からの属性変位: D の葉 → D の共通の枝 → (B との共通の祖先) → B の共通の枝 → B の葉、の順に、通った節の属性を拾う。"""
+    """前後からの属性変位: D の葉 → D の共通の枝 → (B との共通の祖先) → B の共通の枝 → B の葉、の順に、通った節の属性を拾う。
+    MESH=1 のときは、木の代わりに属性メッシュで、D の上位属性 i 番目から B の上位属性 i 番目までの最短の道の属性を拾う。"""
+    if MESH:
+        aD, _ = top_attrs(idsD); aB, _ = top_attrs(idsB); seq = []
+        for x, y in zip(aD, aB):
+            for a in mesh_path(x, y):
+                if a not in seq:
+                    seq.append(a)
+        return seq, dict(D=aD, B=aB)
     lD, cD, aD = side(idsD); lB, cB, aB = side(idsB)
     seq = []
 
     def add(js):
         for j in js:
             a = nodes[j]["attr"]
+            if DEEP and a is not None and (nodes[j]["depth"] <= 1 or float(gen[a]) > 0.05):
+                continue                                                                    # 2 回目: 浅い節・多くの語が持つ属性（を 為る・が 有る など）は拾わない
             if a is not None and a not in seq:
                 seq.append(a)
     for j in lD:                                                                            # D の葉から D の共通の枝まで登る
@@ -212,13 +256,23 @@ for d in docs:
         sc["B + (D − B)/2（属性変位の像）"] = torch.nn.functional.cosine_similarity(FL, (FL[iB].mean(0) + 0.5 * (FL[iD].mean(0) - FL[iB].mean(0)))[None], dim=1) * logf
         sc["B だけ"] = torch.nn.functional.cosine_similarity(FL, FL[iB].mean(0)[None], dim=1) * logf
         sc["D だけ"] = torch.nn.functional.cosine_similarity(FL, FL[iD].mean(0)[None], dim=1) * logf
+        excl = set(iB + iD + iC)
         for name, s in sc.items():
             s = s.clone(); s[iB + iD] = -1e9                                                 # B・D に出た語は除く
             r = rk(s)[iC]; best = float(r.min())
+            fm = []                                                                         # 語の多さをそろえた比べ: C の名詞 1 つにつき、多さの近い語 99 個の中での順位
+            for c in iC:
+                q = FRANK[c]; nb = [FORDER[j] for j in range(max(0, q - 150), min(len(WORDS), q + 151)) if FORDER[j] not in excl]
+                dis = [nb[int(t)] for t in torch.randperm(len(nb), generator=g)[:99]]
+                fm.append(1 / (1 + int((s[dis] > s[c]).sum())))
+            stats[f"多さをそろえた MRR: {name}"] += sum(fm) / len(fm)
             stats[f"MRR: {name}"] += 1 / (best + 1); stats[f"上位100: {name}"] += float(best < 100)
         # (iii) 属性変位の語板の取得: B・D のいちばん珍しい名詞から 1 腕先 4 つずつ → 流れの順に並べる
         wB = min(nB, key=lambda w: FREQ.get(w, 0)); wD = min(nD, key=lambda w: FREQ.get(w, 0))
-        cB, sB = one_arm(wB); cD, sD = one_arm(wD); pool = [y for y in cD + cB if y not in nB and y not in nD]
+        cB, sB = one_arm(wB); cD, sD = one_arm(wD)
+        if DEEP:                                                                            # 2 回目: 1 腕先は相対の確信度（平均 + 3σ）で
+            cB, cD = one_arm_rel(wB), one_arm_rel(wD)
+        pool = [y for y in cD + cB if y not in nB and y not in nD]
         stats["確信度 30% 以上の 1 腕先（1 語あたり）"] += (sB + sD) / 2
         order = []
         for a in seq:                                                                       # 流れの属性の順に、その属性がいちばん明るい語板を 1 つずつ
@@ -265,14 +319,14 @@ for d in docs:
                            arm=f"{wD}: {'・'.join(cD)} ／ {wB}: {'・'.join(cB)}", order="・".join(order), cset="・".join(sorted(cset))))
 res = {k: v / n_q for k, v in stats.items()}; res["問題の数"] = n_q; res["属性樹の節"] = len(nodes); res["sec"] = time.time() - t00
 with open("results/exp76.txt", "a", encoding="utf-8") as f:
-    f.write(json.dumps(dict(exp="76", **res), ensure_ascii=False) + "\n")
+    f.write(json.dumps(dict(exp=TAG, model=MODEL, deep=DEEP, mesh=MESH, **res), ensure_ascii=False) + "\n")
 lines = ["# 前後からの属性変位の例（実験76）", "", "持ち主の構想（2026-10-30）。前の文 B と後ろの文 D から、間の文 C を作る属性（属性の流れ）と語板の列を集めた。作り方: experiments/exp76_attribute_shift.py。",
          "1 作品から 1 例。「C の名詞」は B・D に出ない C の名詞（当てたいもの）。「1 腕先の語板」は、B・D のいちばん珍しい名詞の「の前・の後・と」の値で、語板を持つ語 4 つずつ。", "",
          "| 文 | 属性の流れ（D → B、先頭 8） | 1 腕先の語板（D の語: … ／ B の語: …） | 語板の列 | C の名詞 |", "|---|---|---|---|---|"]
 for e in ex:
     lines.append(f"| B: {e['B']}<br>C: {e['C']}<br>D: {e['D']} | {e['flow']} | {e['arm']} | {e['order']} | {e['cset']} |")
 lines += ["", "## 数（問題 " + str(n_q) + " 問）", ""] + [f"- {k}: {v:.4f}" if isinstance(v, float) else f"- {k}: {v}" for k, v in res.items()]
-open("docs/attribute_shift_76.md", "w", encoding="utf-8").write("\n".join(lines) + "\n")
+open(f"docs/attribute_shift_{TAG}.md", "w", encoding="utf-8").write("\n".join(lines) + "\n")
 # 一覧: 名詞の一致率が高い 100 例・低い 100 例（低い方は、一致 0 の中から間の行の名詞が多いもの）
 LIST.sort(key=lambda e: (-e["rate"], -len(e["cn"])))
 hi = LIST[:100]; lo = sorted(LIST[-100:] if len(LIST) >= 200 else LIST[100:], key=lambda e: e["rate"])
@@ -288,6 +342,6 @@ for name, part in (("一致率が高い 100 例", hi), ("一致率が低い 100 
     for i, e in enumerate(part, 1):
         L.append(f"| {i} | {e['D']} | {e['flow']} | {e['fboards']} | {e['lboards']} | {e['B']} | {e['C']} | {e['hit']} / {e['cn']} | {e['rate']:.2f} |")
     L.append("")
-open("docs/attribute_shift_76_list.md", "w", encoding="utf-8").write("\n".join(L) + "\n")
+open(f"docs/attribute_shift_{TAG}_list.md", "w", encoding="utf-8").write("\n".join(L) + "\n")
 for k, v in res.items():
     print(k, round(v, 4) if isinstance(v, float) else v)
