@@ -46,7 +46,7 @@ with torch.no_grad():
 #   語 w の出口の光 E_w を、語板 k の出口に逆から入れると、入口の観点 v に戻る光 = |⟨k の観点 v の出口の光, E_w の観点 v⟩|²（光の通り道は逆にもたどれる）。
 #   「明るさ」版は位相を見ない（明るさどうしの内積）、「位相込み」版は複素の光の内積。どちらも「その他」を含む出口全部。
 with torch.no_grad():
-    FF = torch.cat([field(P[i:i + 1500], NVIEW, NVAL + NVIEW) for i in range(0, len(WORDS), 1500)])   # (語, 観点, 出口) 複素の光
+    FF = torch.cat([field(P[i:i + 1500], NVIEW, NVAL + NVIEW) for i in range(0, len(WORDS), 1500)]) if os.environ.get("FAST") != "1" else torch.zeros(len(WORDS), NVIEW, NVAL + NVIEW, dtype=torch.complex64)   # (語, 観点, 出口) 複素の光
 IRAW = FF.abs() ** 2
 FFn = (FF[..., :NVAL].abs() ** 2).sum(-1)                                                   # (語, 観点) 値の出口に来た光の量                                                                        # 出口の明るさ（割合にしない、そのままの光）
 B3 = B3 / B3.sum(-1, keepdim=True).clamp(min=1e-12)                                         # (語, 観点, 出口) 観点ごとの割合
@@ -224,6 +224,9 @@ import zlib
 SOURCE = os.environ.get("SOURCE", "aozora"); MIN_N = 1 if SOURCE == "conv" else 2
 _adj = f"{PRIV}/data/views/adjacent_{SOURCE}.pkl"
 ADJ = pickle.load(open(_adj, "rb")) if os.path.exists(_adj) else None                       # 上限の目安の表（あれば使う）
+FAST = os.environ.get("FAST") == "1"
+_nx = f"{PRIV}/models/goban_next_{SOURCE}.pt"
+NEXT = torch.load(_nx, weights_only=False) if os.environ.get("NEXT") == "1" and os.path.exists(_nx) else None   # 実験77 の語板（同じ語の並び = 語板 v3）
 ADJP = {y: m / sum(ADJ["TOT"].values()) for y, m in ADJ["TOT"].items()} if ADJ else {}
 if SOURCE == "conv":
     docs = [d for d in map(json.loads, open(f"{PRIV}/data/text/conv_all.jsonl", encoding="utf-8"))
@@ -276,20 +279,28 @@ for d in docs:
             sc[f"log 多さ + {beta} × (融合 + 流れ)"] = lpw + beta * z(z(s_fuse) + z(s_flow))
         # 3. 後方への属性変位: B に (D − B) の半分を足した像（前と後ろの途中）
         sc["B + (D − B)/2（属性変位の像）"] = torch.nn.functional.cosine_similarity(FL, (FL[iB].mean(0) + 0.5 * (FL[iD].mean(0) - FL[iB].mean(0)))[None], dim=1) * logf
-        rev_i = (IRAW.reshape(len(WORDS), -1) @ IRAW[iB + iD].reshape(len(iB + iD), -1).sum(0))   # 逆入れ（明るさ）: B・D の語の光を足して、各語板に逆から
-        rev_c = torch.zeros(len(WORDS))
-        for w in iB + iD:                                                                   # 逆入れ（位相込み）: 語ごとに複素の光を逆に入れ、戻る明るさを足す（語どうしは明るさで足す = 融合）
-            for v in range(NVIEW):
-                rev_c += (FF[:, v, :] @ FF[w, v, :].conj()).abs() ** 2
-        rev_v = torch.zeros(len(WORDS))                                                     # 逆入れ（位相込み・その他を除く）: 値の出口だけを逆に入れる（「その他」の明るさに引っ張られないように）
-        for w in iB + iD:
-            for v in range(NVIEW):
-                rev_v += (FF[:, v, :NVAL] @ FF[w, v, :NVAL].conj()).abs() ** 2 / (FFn[:, v] * FFn[w, v]).clamp(min=1e-12)   # 光の強さでならす（明るい語板ばかり選ばないよう）
-        sc["逆入れ（明るさ）"] = rev_i; sc["逆入れ（位相込み）"] = rev_c; sc["逆入れ（位相込み・その他を除く）"] = rev_v
-        sc["log 多さ + 0.5 × 逆入れ（その他を除く）"] = lpw + 0.5 * z(rev_v)
-        sc["log 多さ + 0.5 × (逆入れ（その他を除く）+ 流れ)"] = lpw + 0.5 * z(z(rev_v) + z(s_flow))
-        sc["log 多さ + 0.5 × 逆入れ（明るさ）"] = lpw + 0.5 * z(rev_i); sc["log 多さ + 0.5 × 逆入れ（位相込み）"] = lpw + 0.5 * z(rev_c)
-        sc["log 多さ + 0.5 × (逆入れ（位相込み）+ 流れ)"] = lpw + 0.5 * z(z(rev_c) + z(s_flow))
+        if not FAST:                                                                        # FAST=1: 逆入れ（時間がかかる）を省く
+            rev_i = (IRAW.reshape(len(WORDS), -1) @ IRAW[iB + iD].reshape(len(iB + iD), -1).sum(0))   # 逆入れ（明るさ）: B・D の語の光を足して、各語板に逆から
+            rev_c = torch.zeros(len(WORDS))
+            for w in iB + iD:                                                                   # 逆入れ（位相込み）: 語ごとに複素の光を逆に入れ、戻る明るさを足す（語どうしは明るさで足す = 融合）
+                for v in range(NVIEW):
+                    rev_c += (FF[:, v, :] @ FF[w, v, :].conj()).abs() ** 2
+            rev_v = torch.zeros(len(WORDS))                                                     # 逆入れ（位相込み・その他を除く）: 値の出口だけを逆に入れる（「その他」の明るさに引っ張られないように）
+            for w in iB + iD:
+                for v in range(NVIEW):
+                    rev_v += (FF[:, v, :NVAL] @ FF[w, v, :NVAL].conj()).abs() ** 2 / (FFn[:, v] * FFn[w, v]).clamp(min=1e-12)   # 光の強さでならす（明るい語板ばかり選ばないよう）
+            sc["逆入れ（明るさ）"] = rev_i; sc["逆入れ（位相込み）"] = rev_c; sc["逆入れ（位相込み・その他を除く）"] = rev_v
+            sc["log 多さ + 0.5 × 逆入れ（その他を除く）"] = lpw + 0.5 * z(rev_v)
+            sc["log 多さ + 0.5 × (逆入れ（その他を除く）+ 流れ)"] = lpw + 0.5 * z(z(rev_v) + z(s_flow))
+            sc["log 多さ + 0.5 × 逆入れ（明るさ）"] = lpw + 0.5 * z(rev_i); sc["log 多さ + 0.5 × 逆入れ（位相込み）"] = lpw + 0.5 * z(rev_c)
+            sc["log 多さ + 0.5 × (逆入れ（位相込み）+ 流れ)"] = lpw + 0.5 * z(z(rev_c) + z(s_flow))
+        if NEXT is not None:                                                                # 実験77: 「隣の文に出る語」の観点の語板（仲間の割合）で、候補の語の仲間を当てる
+            lx = [i for i in iB + iD]
+            s_nb = NEXT["board"][lx].clamp(min=1e-9).log().sum(0)[NEXT["cluster"]]           # Σ_x log P(y の仲間 | x の語板)
+            s_nt = NEXT["table"][lx].clamp(min=1e-9).log().sum(0)[NEXT["cluster"]]           # 同じものを数え方の表で（光を使わない）
+            sc["隣の観点: 語板（実験77）"] = s_nb; sc["隣の観点: 仲間の数え方の表"] = s_nt
+            sc["隣の観点: 語板 + 流れ"] = z(s_nb) + 0.5 * z(s_flow)
+            sc["隣の観点: 語板 + 流れ + 融合"] = z(s_nb) + 0.5 * z(z(s_flow) + z(s_fuse))
         if ADJ is not None:                                                                 # 上限の目安: 光を使わない数え方（隣の文に一緒に出た名詞の表、exp76_ceiling_table.py）
             pmi = torch.zeros(len(WORDS)); cnt = torch.zeros(len(WORDS))
             for x in nB + nD:

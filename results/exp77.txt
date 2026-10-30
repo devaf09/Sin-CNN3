@@ -1,0 +1,2 @@
+{"exp": "77", "source": "conv", "k": 100, "steps": 500, "kl_bits": 0.002505690325051546, "words_with_counts": 14810, "cluster_min": 29, "cluster_max": 1296, "sec": 239.35704898834229, "device": "cuda"}
+{"exp": "77", "source": "aozora", "k": 100, "steps": 500, "kl_bits": 0.0019471565028652549, "words_with_counts": 20413, "cluster_min": 29, "cluster_max": 1296, "sec": 912.1319937705994, "device": "cuda"}
