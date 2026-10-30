@@ -170,11 +170,11 @@ tok = Dictionary(dict="core").tokenizer(); MODE = SplitMode.C
 docs = [json.loads(l) for l in open(f"{PRIV}/data/text/aozora_full.jsonl", encoding="utf-8")]
 rnd = random.Random(0); docs = [d for d in docs if 30000 < len(d["text"]) < 300000]; rnd.shuffle(docs); docs = docs[:60]
 nouns = lambda s: sorted({m.normalized_form() for m in tok.tokenize(s[:500], MODE) if m.part_of_speech()[0] == "名詞" and m.part_of_speech()[1] == "普通名詞" and m.normalized_form() in WI})
-stats = collections.defaultdict(float); n_q = 0; ex = []
+stats = collections.defaultdict(float); n_q = 0; ex = []; LIST = []
 rk = lambda x: torch.argsort(torch.argsort(-x)).float()                                     # 大きい順の順位（0 から）
 g = torch.Generator().manual_seed(0)
 for d in docs:
-    sents = [s for s in re.split(r"(?<=。)", d["text"].replace("\r", "").replace("\n", "").replace("　", "")) if len(s) > 8]
+    sents = [s for s in re.split(r"(?<=。)", d["text"].replace("\r", "").replace("\n", "").replace("　", "")) if len(s) > 8 and "---" not in s and "底本" not in s and "テキスト中" not in s]   # 作品の頭・終わりの説明は除く
     NS = [nouns(s) for s in sents]
     picked = 0
     for k in range(1, len(sents) - 1, 7):                                                   # 7 文おきに、続いた 3 文
@@ -238,6 +238,27 @@ for d in docs:
         stats["語の多さの上位 8 が C に出る"] += float(bool(set(top8) & cset))
         rnd8 = [WORDS[int(j)] for j in torch.randint(0, len(WORDS), (8,), generator=g)]
         stats["でたらめ 8 が C に出る"] += float(bool(set(rnd8) & cset))
+        # ---- 一覧用（持ち主の依頼 2026-10-30）: 流れに対応した語板と、語板どうしのつながりで選んだ語板 ----
+        flow_boards = []                                                                    # 流れの属性ごとに、その属性がいちばん持ち上がる語板（よく出る語を少し優先）
+        for a in seq:
+            sa = FL[:, a] / (prior[a] + 1e-9) * logf; sa[iB + iD] = -1
+            for j in torch.argsort(sa, descending=True)[:5].tolist():
+                if WORDS[j] not in flow_boards:
+                    flow_boards.append(WORDS[j]); break
+        links = {}                                                                          # つながり: B・D の名詞と流れの語板の 1 腕先（相対の確信度）
+        for w in nB + nD + flow_boards:
+            for y in one_arm_rel(w, k=6):
+                if y not in nB and y not in nD:
+                    links.setdefault(y, []).append(w)
+        fb = set(flow_boards)
+        link_boards = sorted(links, key=lambda y: (-(y in fb), -len(links[y]), -float(s_flow[WI[y]])))[:8]   # 流れの語板でもあるもの → つながりが多いもの → 流れに近いもの
+        got = set(flow_boards) | set(link_boards); cn = [w for w in nC if w not in nB and w not in nD]
+        rate = len(got & set(cn)) / len(cn)
+        stats["一致率（流れの語板 + つながりの語板）"] += rate
+        cut2 = lambda s: ((s[:80] + "…") if len(s) > 80 else s).replace("|", "｜")
+        LIST.append(dict(rate=rate, title=d.get("title", ""), B=cut2(sents[k - 1]), C=cut2(sents[k]), D=cut2(sents[k + 1]), flow=" → ".join(aname(a) for a in seq[:6]),
+                         fboards="・".join(flow_boards[:6]), lboards="・".join(f"{y}（←{'・'.join(links[y][:2])}）" for y in link_boards[:6]),
+                         hit="・".join(sorted(got & set(cn))) or "−", cn="・".join(cn)))
         if len(ex) < 40 and picked <= 1:
             cut = lambda s: ((s[:60] + "…") if len(s) > 60 else s).replace("|", "｜")
             ex.append(dict(title=d.get("title", ""), B=cut(sents[k - 1]), C=cut(sents[k]), D=cut(sents[k + 1]), flow=" → ".join(aname(a) for a in seq[:8]),
@@ -252,5 +273,21 @@ for e in ex:
     lines.append(f"| B: {e['B']}<br>C: {e['C']}<br>D: {e['D']} | {e['flow']} | {e['arm']} | {e['order']} | {e['cset']} |")
 lines += ["", "## 数（問題 " + str(n_q) + " 問）", ""] + [f"- {k}: {v:.4f}" if isinstance(v, float) else f"- {k}: {v}" for k, v in res.items()]
 open("docs/attribute_shift_76.md", "w", encoding="utf-8").write("\n".join(lines) + "\n")
+# 一覧: 名詞の一致率が高い 100 例・低い 100 例（低い方は、一致 0 の中から間の行の名詞が多いもの）
+LIST.sort(key=lambda e: (-e["rate"], -len(e["cn"])))
+hi = LIST[:100]; lo = sorted(LIST[-100:] if len(LIST) >= 200 else LIST[100:], key=lambda e: e["rate"])
+L = ["# 属性変位の一覧（実験76）— 名詞の一致率が高い 100 例・低い 100 例", "",
+     "持ち主の依頼（2026-10-30）。青空文庫（著作権切れ）の小説などから続いた 3 行（前の行 B・間の行 C・後ろの行 D）を取り、B と D だけから C を作る属性と語板を集めた。作り方: experiments/exp76_attribute_shift.py。", "",
+     "- **属性の流れ** = 後ろの行 D の上位 3 属性から属性樹を共通の枝まで逆に登り、前の行 B の共通の枝まで登りながら拾った属性（先頭 6）。",
+     "- **流れに対応した語板** = 流れの属性ごとに、その属性がいちばん持ち上がる語板（よく出る語を少し優先、B・D の語は除く）。",
+     "- **つながりで選んだ語板** = B・D の名詞と流れの語板の「1 腕先」（「の前・の後・と」の値で語板を持つ語、相対の確信度 = 平均 + 3σ 超え）。（← どの語板から来たか）",
+     "- **一致率** = 間の行 C の名詞（B・D に出ないもの）のうち、流れの語板とつながりの語板のどちらかに入った割合。",
+     f"- 全部 {len(LIST)} 例の平均の一致率: {res.get('一致率（流れの語板 + つながりの語板）', 0):.3f}。一致率が 0 より大きい例: {sum(e['rate'] > 0 for e in LIST)}。", ""]
+for name, part in (("一致率が高い 100 例", hi), ("一致率が低い 100 例", lo)):
+    L += [f"## {name}", "", "| # | 後ろの行 D | 属性の流れ | 流れに対応した語板 | つながりで選んだ語板 | 前の行 B | 間の行 C（答え） | 当たった名詞 / C の名詞 | 一致率 |", "|---|---|---|---|---|---|---|---|---|"]
+    for i, e in enumerate(part, 1):
+        L.append(f"| {i} | {e['D']} | {e['flow']} | {e['fboards']} | {e['lboards']} | {e['B']} | {e['C']} | {e['hit']} / {e['cn']} | {e['rate']:.2f} |")
+    L.append("")
+open("docs/attribute_shift_76_list.md", "w", encoding="utf-8").write("\n".join(L) + "\n")
 for k, v in res.items():
     print(k, round(v, 4) if isinstance(v, float) else v)
