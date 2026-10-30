@@ -1,0 +1,150 @@
+{
+ "models": [
+  {
+   "file": "goban_compound_a.pt",
+   "boards": 4798,
+   "rows": 64,
+   "plates": 8,
+   "phases": 512,
+   "views": 9,
+   "mb": 10.025512
+  },
+  {
+   "file": "goban_compound_b.pt",
+   "boards": 2092,
+   "rows": 64,
+   "plates": 8,
+   "phases": 512,
+   "views": 9,
+   "mb": 4.382952
+  },
+  {
+   "file": "goban_mix100_seed0.pt",
+   "boards": 20000,
+   "rows": 64,
+   "plates": 8,
+   "phases": 512,
+   "views": 0,
+   "mb": 41.32031
+  },
+  {
+   "file": "goban_mix100_seed1.pt",
+   "boards": 20000,
+   "rows": 64,
+   "plates": 8,
+   "phases": 512,
+   "views": 0,
+   "mb": 41.32031
+  },
+  {
+   "file": "goban_v2_part0.pt",
+   "boards": 15000,
+   "rows": 64,
+   "plates": 8,
+   "phases": 512,
+   "views": 9,
+   "mb": 31.005466
+  },
+  {
+   "file": "goban_v2_part0_scratch.pt",
+   "boards": 15000,
+   "rows": 64,
+   "plates": 8,
+   "phases": 512,
+   "views": 9,
+   "mb": 31.005586
+  },
+  {
+   "file": "goban_v2_part1.pt",
+   "boards": 15000,
+   "rows": 64,
+   "plates": 8,
+   "phases": 512,
+   "views": 9,
+   "mb": 31.005658
+  },
+  {
+   "file": "goban_v2_part1_scratch.pt",
+   "boards": 15000,
+   "rows": 64,
+   "plates": 8,
+   "phases": 512,
+   "views": 9,
+   "mb": 31.005778
+  },
+  {
+   "file": "goban_v3_part0_scratch.pt",
+   "boards": 15000,
+   "rows": 128,
+   "plates": 16,
+   "phases": 2048,
+   "views": 9,
+   "mb": 123.165586
+  },
+  {
+   "file": "goban_v3_part1_scratch.pt",
+   "boards": 15000,
+   "rows": 128,
+   "plates": 16,
+   "phases": 2048,
+   "views": 9,
+   "mb": 123.165778
+  },
+  {
+   "file": "goban_動詞_seed0.pt",
+   "boards": 3000,
+   "rows": 64,
+   "plates": 8,
+   "phases": 512,
+   "views": 4,
+   "mb": 6.207593
+  },
+  {
+   "file": "goban_動詞_seed1.pt",
+   "boards": 3000,
+   "rows": 64,
+   "plates": 8,
+   "phases": 512,
+   "views": 4,
+   "mb": 6.207593
+  },
+  {
+   "file": "goban_名詞_seed0.pt",
+   "boards": 20000,
+   "rows": 64,
+   "plates": 8,
+   "phases": 512,
+   "views": 5,
+   "mb": 41.319593
+  },
+  {
+   "file": "goban_名詞_seed1.pt",
+   "boards": 20000,
+   "rows": 64,
+   "plates": 8,
+   "phases": 512,
+   "views": 5,
+   "mb": 41.319593
+  }
+ ],
+ "tree_v3": {
+  "nodes": 1471,
+  "by_depth": {
+   "0": 1,
+   "1": 6,
+   "2": 36,
+   "3": 216,
+   "4": 1212
+  },
+  "words_deepest": {
+   "0": 18004,
+   "2": 2509,
+   "1": 4387,
+   "4": 3527,
+   "3": 1573
+  },
+  "attrs_with_words": 405,
+  "attrs_total": 405,
+  "mean_attrs_per_word": 6.614233493804932
+ }
+}
