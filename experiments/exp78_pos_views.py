@@ -102,14 +102,30 @@ use = TR.sum(2) > 0                                                             
 pri = (TR.sum(0) + 0.5) / (TR.sum(0) + 0.5).sum(1, keepdim=True)
 tg = (TR + 2 * pri[None]) / (TR.sum(2, keepdim=True) + 2)                                   # 少しだけ平らに（品詞はほぼ決まっているので k = 2）
 print("語", len(WORDS), "（上限のある品詞になりうる語", len(closed), "）", f"{time.time() - t0:.0f} 秒", flush=True)
+# 出口のずらし（実験56〜58 の決まり。1 回目はこれを忘れて、よく出る語の板が 0.6 ほどしか当たらなかった）:
+#   違う観点（違う入口）から同じ出口に光を集めすぎると、器の決まり（光の和 ≤ 1）にぶつかる。名詞の語は観点 1「名詞」と観点 2「普通名詞」の
+#   どちらも値の 0 番に光を集めたいので、観点ごとに値の場所を 2 つずつずらし、「その他」も観点ごとに別の出口にする。
+NOUT = NV + len(VIEWS)                                                                      # 出口の数 = 値 14 + 観点ごとのその他 8
+PHYS = torch.tensor([[(r + 2 * j) % NV for r in range(NV)] + [NV + j] for j in range(len(VIEWS))])   # (観点, 値 + その他) → 出口の場所
+
+
+def to_phys(T):
+    """(語, 観点, 値 + その他) → (語, 観点, 出口)。"""
+    O = torch.zeros(T.shape[0], T.shape[1], NOUT)
+    for j in range(len(VIEWS)):
+        O[:, j, PHYS[j]] = T[:, j]
+    return O
+
+
 B = 5000
-P = torch.cat([train(tg[i:i + B], use[i:i + B], a.steps, i, lr=0.03, dev=dev, rows=64, plates=16).cpu() for i in range(0, len(WORDS), B)])
-Wt = torch.cat([run(P[i:i + B].to(dev), len(VIEWS), NV + 1).cpu() for i in range(0, len(WORDS), B)])
-pb = prob(Wt)
+P = torch.cat([train(to_phys(tg[i:i + B]), use[i:i + B], a.steps, i, lr=0.03, dev=dev, rows=64, plates=16).cpu() for i in range(0, len(WORDS), B)])
+Wt = torch.cat([run(P[i:i + B].to(dev), len(VIEWS), NOUT).cpu() for i in range(0, len(WORDS), B)])
+pb = prob(torch.stack([Wt[:, j, PHYS[j]] for j in range(len(VIEWS))], 1))                  # 出口 → 値 + その他（観点ごとに割合に直す）
 mask = use[..., None].float()
 res = dict(exp="78", words=len(WORDS), closed=len(closed), views=VIEWS, steps=a.steps,
            board=evaluate(pb * mask + (1 - mask) / (NV + 1), TE * mask)["bits"], table=evaluate(tg * mask + (1 - mask) / (NV + 1), TE * mask)["bits"],
            board_top=evaluate(pb[:, :1], TE[:, :1]), table_top=evaluate(tg[:, :1], TE[:, :1]))
+res["sure_words_ok"] = float(((tg[:, 0].max(1).values > 0.99) & (pb[:, 0].gather(1, tg[:, 0].argmax(1, keepdim=True))[:, 0] > 0.9)).sum() / (tg[:, 0].max(1).values > 0.99).sum())   # 品詞の決まっている語で、語板も 0.9 以上
 # 揺れのある語の、最初の枝（大分類）の割合: 数えた割合と語板の割合
 AMB = ["が", "で", "と", "から", "の", "に", "な", "ね", "や", "けれど", "そして", "又", "此の", "何", "大きな", "同じ", "まで", "ので", "ない", "らしい"]
 amb = []
@@ -125,12 +141,12 @@ for t in ["接続詞", "接頭辞", "感動詞", "連体詞", "代名詞", "形�
     s = pb[:, 0, TOP.index(t)] * logf
     rev[t] = [(WORDS[int(k)], round(float(pb[int(k), 0, TOP.index(t)]), 2)) for k in torch.argsort(s, descending=True)[:15]]
 res.update(ambiguous=amb, reverse=rev, sec=time.time() - t0, device=dev)
-torch.save(dict(P=P, words=WORDS, views=VIEWS, top=TOP, sub=SUB, table=tg), f"{PRIV}/models/goban_pos.pt")
+torch.save(dict(P=P, words=WORDS, views=VIEWS, top=TOP, sub=SUB, table=tg, phys=PHYS, nout=NOUT), f"{PRIV}/models/goban_pos.pt")
 with open("results/exp78.txt", "a", encoding="utf-8") as f:
     f.write(json.dumps(res, ensure_ascii=False) + "\n")
 L = ["# 品詞の観点（実験78、D 案）", "", "品詞を観点周波数の木にした（観点 1 = 大分類、観点 2〜8 = 品詞ごとの中分類）。作り方: experiments/exp78_pos_views.py、計画: [文法解析・組立](grammar.md)。", "",
      f"- 語板 {len(WORDS):,} 語（上限のある品詞になりうる語 {len(closed):,} を含む）。器 = 縦 64 × 板 16、{a.steps} 回。",
-     f"- 確かめ用の材料での当たり（使う観点だけ、ビット）: 語板 {res['board']:.3f}、数えた表 {res['table']:.3f}。最初の枝（大分類）だけ: 語板 {res['board_top']['bits']:.3f}（上位 1 の当たり {res['board_top']['top1']:.3f}）、表 {res['table_top']['bits']:.3f}。", "",
+     f"- 品詞の決まっている語（表で 0.99 以上）のうち、語板でも 0.9 以上: {res["sure_words_ok"]:.3f}。確かめ用の材料での当たり（使う観点だけ、ビット）: 語板 {res["board"]:.3f}、数えた表 {res['table']:.3f}。最初の枝（大分類）だけ: 語板 {res['board_top']['bits']:.3f}（上位 1 の当たり {res['board_top']['top1']:.3f}）、表 {res['table_top']['bits']:.3f}。", "",
      "## 揺れのある語（最初の枝の割合: 数えた割合 → 語板の割合）", "", "| 語 | 品詞の割合 |", "|---|---|"]
 for w, xs in amb:
     L.append(f"| {w} | " + "、".join(f"{t} {x:.3f} → {y:.3f}" for t, x, y in xs) + " |")
