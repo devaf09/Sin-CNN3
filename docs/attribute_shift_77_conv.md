@@ -1,5 +1,7 @@
 # 前後からの属性変位の例（実験76）
 
+出典: 会話の例は RealPersonaChat・JMultiWOZ（nu-dialogue、CC BY-SA 4.0、https://github.com/nu-dialogue ）から抜き出した。
+
 持ち主の構想（2026-10-30）。前の文 B と後ろの文 D から、間の文 C を作る属性（属性の流れ）と語板の列を集めた。作り方: experiments/exp76_attribute_shift.py。
 1 作品から 1 例。「C の名詞」は B・D に出ない C の名詞（当てたいもの）。「1 腕先の語板」は、B・D のいちばん珍しい名詞の「の前・の後・と」の値で、語板を持つ語 4 つずつ。
 

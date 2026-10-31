@@ -1,5 +1,7 @@
 # 属性変位の一覧（実験76）— 名詞の一致率が高い 100 例・低い 100 例
 
+出典: 会話の例は RealPersonaChat・JMultiWOZ（nu-dialogue、CC BY-SA 4.0、https://github.com/nu-dialogue ）から抜き出した。
+
 持ち主の依頼（2026-10-30）。青空文庫（著作権切れ）の小説などから続いた 3 行（前の行 B・間の行 C・後ろの行 D）を取り、B と D だけから C を作る属性と語板を集めた。作り方: experiments/exp76_attribute_shift.py。
 
 - **属性の流れ** = 後ろの行 D の上位 3 属性から属性樹を共通の枝まで逆に登り、前の行 B の共通の枝まで登りながら拾った属性（先頭 6）。

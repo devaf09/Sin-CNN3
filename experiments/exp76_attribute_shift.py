@@ -225,6 +225,9 @@ SOURCE = os.environ.get("SOURCE", "aozora"); MIN_N = 1 if SOURCE == "conv" else 
 _adj = f"{PRIV}/data/views/adjacent_{SOURCE}.pkl"
 ADJ = pickle.load(open(_adj, "rb")) if os.path.exists(_adj) else None                       # 上限の目安の表（あれば使う）
 FAST = os.environ.get("FAST") == "1"
+# 例の一覧（本文の抜き出しを含む）の置き場所: 持ち主が集めた Web 小説（実験だけ、公開しない）は非公開フォルダへ。公開してよい材料だけ docs/ へ
+DOCDIR = f"{PRIV}/docs" if SOURCE in ("web2", "web3") else "docs"
+NOTE_SRC = "会話の例は RealPersonaChat・JMultiWOZ（nu-dialogue、CC BY-SA 4.0）から抜き出した。" if SOURCE == "conv" else ""
 _nx = f"{PRIV}/models/goban_next_{SOURCE}.pt"
 NEXT = torch.load(_nx, weights_only=False) if os.environ.get("NEXT") == "1" and os.path.exists(_nx) else None   # 実験77 の語板（同じ語の並び = 語板 v3）
 ADJP = {y: m / sum(ADJ["TOT"].values()) for y, m in ADJ["TOT"].items()} if ADJ else {}
@@ -394,7 +397,7 @@ lines = ["# 前後からの属性変位の例（実験76）", "", "持ち主の�
 for e in ex:
     lines.append(f"| B: {e['B']}<br>C: {e['C']}<br>D: {e['D']} | {e['flow']} | {e['arm']} | {e['order']} | {e['cset']} |")
 lines += ["", "## 数（問題 " + str(n_q) + " 問）", ""] + [f"- {k}: {v:.4f}" if isinstance(v, float) else f"- {k}: {v}" for k, v in res.items()]
-open(f"docs/attribute_shift_{TAG}.md", "w", encoding="utf-8").write("\n".join(lines) + "\n")
+open(f"{DOCDIR}/attribute_shift_{TAG}.md", "w", encoding="utf-8").write("\n".join(lines) + "\n")
 # 一覧: 名詞の一致率が高い 100 例・低い 100 例（低い方は、一致 0 の中から間の行の名詞が多いもの）
 LIST.sort(key=lambda e: (-e["rate"], -len(e["cn"])))
 hi = LIST[:100]; lo = sorted(LIST[-100:] if len(LIST) >= 200 else LIST[100:], key=lambda e: e["rate"])
@@ -405,11 +408,13 @@ L = ["# 属性変位の一覧（実験76）— 名詞の一致率が高い 100 �
      "- **つながりで選んだ語板** = B・D の名詞と流れの語板の「1 腕先」（「の前・の後・と」の値で語板を持つ語、相対の確信度 = 平均 + 3σ 超え）。（← どの語板から来たか）",
      "- **一致率** = 間の行 C の名詞（B・D に出ないもの）のうち、流れの語板とつながりの語板のどちらかに入った割合。",
      f"- 全部 {len(LIST)} 例の平均の一致率: {res.get('一致率（流れの語板 + つながりの語板）', 0):.3f}。一致率が 0 より大きい例: {sum(e['rate'] > 0 for e in LIST)}。", ""]
+if NOTE_SRC:
+    L.insert(2, "出典: " + NOTE_SRC); lines.insert(2, "出典: " + NOTE_SRC)                   # 抜き出した会話の出典（CC BY-SA の表示）
 for name, part in (("一致率が高い 100 例", hi), ("一致率が低い 100 例", lo)):
     L += [f"## {name}", "", "| # | 後ろの行 D | 属性の流れ | 流れに対応した語板 | つながりで選んだ語板 | 前の行 B | 間の行 C（答え） | 当たった名詞 / C の名詞 | 一致率 |", "|---|---|---|---|---|---|---|---|---|"]
     for i, e in enumerate(part, 1):
         L.append(f"| {i} | {e['D']} | {e['flow']} | {e['fboards']} | {e['lboards']} | {e['B']} | {e['C']} | {e['hit']} / {e['cn']} | {e['rate']:.2f} |")
     L.append("")
-open(f"docs/attribute_shift_{TAG}_list.md", "w", encoding="utf-8").write("\n".join(L) + "\n")
+open(f"{DOCDIR}/attribute_shift_{TAG}_list.md", "w", encoding="utf-8").write("\n".join(L) + "\n")
 for k, v in res.items():
     print(k, round(v, 4) if isinstance(v, float) else v)
