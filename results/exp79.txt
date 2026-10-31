@@ -1,0 +1,4 @@
+{"exp": "79", "views": 9, "plates": 16, "words": 6000, "steps": 500, "train_sec": 110.36113691329956, "bits_v3": 1.5643280744552612, "table_v3": 1.5234469175338745}
+{"exp": "79", "views": 18, "plates": 16, "words": 6000, "steps": 500, "train_sec": 197.9957263469696, "bits_v3": 1.657616138458252, "table_v3": 1.5234469175338745, "pos_kl_bits": 0.10704667866230011, "pos_top1_agree": 0.998670220375061, "person_agree": 1.0}
+{"exp": "79", "views": 18, "plates": 24, "words": 6000, "steps": 500, "train_sec": 304.4446406364441, "bits_v3": 1.5927486419677734, "table_v3": 1.5234469175338745, "pos_kl_bits": 0.10440976172685623, "pos_top1_agree": 0.9980053305625916, "person_agree": 1.0}
+{"exp": "79", "views": 18, "plates": 32, "words": 6000, "steps": 500, "train_sec": 407.0041651725769, "bits_v3": 1.5635565519332886, "table_v3": 1.5234469175338745, "pos_kl_bits": 0.11532982438802719, "pos_top1_agree": 0.9977836608886719, "person_agree": 1.0}
