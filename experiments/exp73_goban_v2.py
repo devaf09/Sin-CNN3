@@ -24,13 +24,22 @@ ap.add_argument("--out", default="results/exp73.txt")
 ap.add_argument("--rows", type=int, default=64)                                           # 器の縦（語板 v3 = 128、実験75）
 ap.add_argument("--plates", type=int, default=8)                                          # 板の枚数（語板 v3 = 16）
 ap.add_argument("--steps", type=int, default=2000)                                        # 学習の回数（語板 v3 = 500 で十分、実験75）
+ap.add_argument("--nv", type=int, default=45)                                             # 1 観点の値の席（語板 v4 = 490、縦 512 の器に入る数。持ち主 2026-10-31「席の数を増やした板」）
 ap.add_argument("--name", default="v2")                                                   # 保存名 goban_<name>_part<k>.pt
 a = ap.parse_args()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from goban_batch import train, run, prob, evaluate
+from goban_batch import train, run, prob, evaluate as _evaluate
+
+
+def evaluate(Pr, counts):
+    """値が多いとき（--nv 490 など）は、上位 5 の順位を数えず、交差エントロピーと上位 1 だけを測る（goban_batch.evaluate は値の数の 2 乗の記憶を使う）。"""
+    if Pr.shape[-1] <= 100:
+        return _evaluate(Pr, counts)
+    Pr = Pr.cpu().reshape(-1, Pr.shape[-1]); w = counts.reshape(-1, counts.shape[-1]); s_ = w.sum().clamp(min=1)
+    return dict(bits=float(-(w * torch.log2(Pr.clamp(min=1e-9))).sum() / s_), top1=float(w.gather(1, Pr.argmax(1, keepdim=True)).sum() / s_), n=int(s_))
 
 sys.stdout.reconfigure(encoding="utf-8"); t00 = time.time(); dev = a.device
-VIEWS = ["どんな", "を", "が", "で", "に", "の前", "の後", "と", "は"]; NV = 45
+VIEWS = ["どんな", "を", "が", "で", "に", "の前", "の後", "と", "は"]; NV = a.nv
 SKIP = set("こと 物 所 方 事 為 訳 時 中 前 後 内 外 上 下 他 気 感じ 一緒 自分 仕方 様 辺 程 頃 間 度 位 際 通り 儘 序で 筈 振り 積もり 以上 以外 場合 本当 皆 皆さん 今日 今 昨日 明日 先 次 横 側".split())
 D = pickle.load(open("D:/AI_git/Sin-CNN3_private/data/views/merged2.pkl", "rb"))
 ALL = [n for n in sorted(D["noun_total"], key=D["noun_total"].get, reverse=True) if n not in SKIP][:a.nouns]
@@ -68,7 +77,7 @@ if not a.scratch and a.rows == 64 and a.plates == 8:                            
         if n in vi:
             P0[i] = v1["P"][vi[n]]; n_v1 += 1
 rows = []; P = P0
-B = 5000 if a.rows * a.plates <= 512 else 1500; done = 0                               # 大きな器は GPU のメモリに合わせて小分け
+B = 5000 if a.rows * a.plates <= 512 else 1500 if a.rows <= 128 else 300; done = 0                               # 大きな器は GPU のメモリに合わせて小分け
 for steps in {500: (250, 250), 1000: (250, 250, 500)}.get(a.steps, (250, 250, 500, 1000)):          # 250・500・1000・2000 回の時点で当たりを測る（--steps まで）
     P = torch.cat([train(tg[i:i + B], torch.ones(tg[i:i + B].shape[:2], dtype=torch.bool), steps, a.part + i + done, lr=0.03, P0=P[i:i + B], dev=dev).cpu() for i in range(0, len(WORDS), B)])
     done += steps
