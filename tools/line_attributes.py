@@ -17,11 +17,16 @@ WI = {w: i for i, w in enumerate(WORDS)}; VIEWS = M["views"]
 INV = {(j, r): x for j, v in enumerate(VIEWS) for x, r in M["pos"][v].items()}               # 出口の場所 → 値の名前
 from sudachipy import Dictionary, SplitMode
 tok = Dictionary(dict="core").tokenizer(); MODE = SplitMode.C
-docs = [json.loads(l) for l in open(f"{PRIV}/data/text/aozora_full.jsonl", encoding="utf-8")]
+SOURCE = os.environ.get("SOURCE", "aozora")                                                 # aozora（青空文庫）/ web2（持ち主が集めた Web 小説、実験だけ）
+NEED = int(os.environ.get("N", "10"))                                                       # 出す行の数（傾向を数えるときは多めに）
+if SOURCE == "web2":
+    docs = [json.loads(l) for l in open(f"{PRIV}/data/text/webnovels2.jsonl", encoding="utf-8")]
+else:
+    docs = [json.loads(l) for l in open(f"{PRIV}/data/text/aozora_full.jsonl", encoding="utf-8")]
 rnd = random.Random(31); rnd.shuffle(docs)
 out = []
 for d in docs:
-    sents = [s for s in re.split(r"(?<=。)", d["text"].replace("\r", "").replace("\n", "").replace("　", "")) if 60 <= len(s) <= 120 and "底本" not in s and "---" not in s]
+    sents = [s for s in re.split(r"(?<=[。！？])", d["text"].replace("\r", "").replace("\n", "。" if SOURCE == "web2" else "").replace("　", "")) if 60 <= len(s) <= 120 and "底本" not in s and "---" not in s]
     if not sents:
         continue
     s = rnd.choice(sents)
@@ -43,7 +48,7 @@ for d in docs:
         else:
             rows.append((surf, n, None))
     out.append((d.get("title", ""), s, rows))
-    if len(out) >= 10:
+    if len(out) >= NEED:
         break
 L = []
 for i, (title, s, rows) in enumerate(out, 1):
@@ -54,5 +59,14 @@ for i, (title, s, rows) in enumerate(out, 1):
         else:
             L.append(f"- {surf}（{n}）: 語板なし")
     L.append("")
-open(f"{PRIV}/docs/line_attributes.md", "w", encoding="utf-8").write("\n".join(L))
-print("\n".join(L))
+# 傾向の数: 語ごとの上位 3 つの割合の和、上位 3 つに「は 無い・が 有る・どんな 無い」が入る割合、語板のある語の割合
+GEN = {"は 無い", "が 有る", "どんな 無い"}
+tops = [top for _, _, rows in out for _, _, top in rows if top]; allw = [r for _, _, rows in out for r in rows]
+stat = dict(source=SOURCE, lines=len(out), words=len(allw), with_board=len(tops) / len(allw),
+            top3_share=sum(sum(p for _, p in t[:3]) for t in tops) / len(tops),
+            generic_in_top3=sum(any(a in GEN for a, _ in t[:3]) for t in tops) / len(tops),
+            generic_top1=sum(t[0][0] in GEN for t in tops) / len(tops))
+print(json.dumps(stat, ensure_ascii=False))
+open(f"{PRIV}/docs/line_attributes_{SOURCE}.md", "w", encoding="utf-8").write("\n".join(L[:400]))   # 例は非公開フォルダへ（Web 小説は実験だけ）
+if NEED <= 10:
+    print("\n".join(L))
