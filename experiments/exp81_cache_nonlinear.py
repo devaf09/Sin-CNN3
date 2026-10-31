@@ -35,6 +35,16 @@ for d in docs:
         base = LOGB[[WI[w] for w in NS[k - 1]]].sum(0)[LAB] + lpw; pl = torch.softmax(base, 0)
         flat = float(-(pl * torch.log(pl + 1e-30)).sum()) / HMAX                              # 長期の答えの平たさ（0 = はっきり、1 = まったく平ら）
         cnt = collections.Counter(w for s in NS[:k] for w in s)
+        if k == 10 or "FIRST" not in dir():
+            FIRST = torch.full((len(WORDS),), -10 ** 6, dtype=torch.float); SUR = torch.zeros(len(WORDS)); DONE = set()
+        for kk in range(0 if k == 10 else k - 1, k):                                          # 初めて出た文の番号と、そのときの長期にとっての意外さ
+            if kk > 0 and NS[kk - 1]:
+                lpk = torch.log_softmax(LOGB[[WI[w] for w in NS[kk - 1]]].sum(0)[LAB] + lpw, 0)
+            else:
+                lpk = torch.log_softmax(lpw, 0)
+            for w in NS[kk]:
+                if w not in DONE:
+                    DONE.add(w); FIRST[WI[w]] = kk; SUR[WI[w]] = float(-lpk[WI[w]])
         n = torch.zeros(len(WORDS)); n[[WI[w] for w in cnt]] = torch.tensor([float(c) for c in cnt.values()])
 
         def mix(f, lam):
@@ -47,6 +57,12 @@ for d in docs:
             S[f"べき p={p}"] = mix(n ** p, 0.7)
         for q in (1, 3):
             S[f"自信で切り替え q={q}"] = mix(n, 0.9 * flat ** q)
+        # 逆特性（持ち主 2026-10-31「キャッシュ中に初めて出た単語ほど出やすくなる」）
+        seen_ids = n > 0
+        S["逆: 出た語はみな同じ（p=0）"] = mix(seen_ids.float(), 0.7)
+        S["逆: 回数が少ないほど強く（p=−0.5）"] = mix(torch.where(seen_ids, n.clamp(min=1) ** -0.5, torch.zeros(1)), 0.7)
+        S["逆: 長期にとって意外なほど強く"] = mix(torch.where(seen_ids, SUR, torch.zeros(1)), 0.7)
+        S["逆: 新しく加わった語ほど強く"] = mix(torch.where(seen_ids, 0.97 ** (k - FIRST), torch.zeros(1)), 0.7)
         for w in targets:
             j = WI[w]; kind = "くり返し" if cnt[w] > 0 else "初めて"
             for name, s in S.items():
