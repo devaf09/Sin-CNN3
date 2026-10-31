@@ -226,7 +226,7 @@ _adj = f"{PRIV}/data/views/adjacent_{SOURCE}.pkl"
 ADJ = pickle.load(open(_adj, "rb")) if os.path.exists(_adj) else None                       # 上限の目安の表（あれば使う）
 FAST = os.environ.get("FAST") == "1"
 # 例の一覧（本文の抜き出しを含む）の置き場所: 持ち主が集めた Web 小説（実験だけ、公開しない）は非公開フォルダへ。公開してよい材料だけ docs/ へ
-DOCDIR = f"{PRIV}/docs" if SOURCE in ("web2", "web3") else "docs"
+DOCDIR = f"{PRIV}/docs" if SOURCE in ("web2", "web3") else "docs/attribute_shift"
 NOTE_SRC = "会話の例は RealPersonaChat・JMultiWOZ（nu-dialogue、CC BY-SA 4.0）から抜き出した。" if SOURCE == "conv" else ""
 _nx = f"{PRIV}/models/goban_next_{SOURCE}.pt"
 NEXT = torch.load(_nx, weights_only=False) if os.environ.get("NEXT") == "1" and os.path.exists(_nx) else None   # 実験77 の語板（同じ語の並び = 語板 v3）
