@@ -28,8 +28,17 @@ ap.add_argument("--nval", type=int, default=2000)
 ap.add_argument("--ncl", type=int, default=45)
 a = ap.parse_args()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from goban_batch import train, run, prob, evaluate, init_plates, _h, VAL0
+from goban_batch import train, run, prob, init_plates, _h, VAL0
 import goban_batch
+
+
+
+def evaluate(Pr, counts):
+    """交差エントロピー（ビット）と上位 1 の当たり。goban_batch.evaluate は上位 5 の順位を値の数の 2 乗で数えるので、値 2,000 では記憶が足りない（1 回目はここで止まった）。"""
+    Pr = Pr.cpu().reshape(-1, Pr.shape[-1]); w = counts.reshape(-1, counts.shape[-1]); s = w.sum().clamp(min=1)
+    top1 = w.gather(1, Pr.argmax(1, keepdim=True)).sum() / s
+    return dict(bits=float(-(w * torch.log2(Pr.clamp(min=1e-9))).sum() / s), top1=float(top1), n=int(s))
+
 
 sys.stdout.reconfigure(encoding="utf-8"); t00 = time.time(); dev = a.device; PRIV = "D:/AI_git/Sin-CNN3_private"
 VIEW = "を"
