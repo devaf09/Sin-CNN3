@@ -15,7 +15,10 @@ WI = set(w for k in (0, 1) for w in torch.load(f"{PRIV}/models/goban_v3_part{k}_
 tok = Dictionary(dict="core").tokenizer(); MODE = SplitMode.C
 nouns = lambda s: {m.normalized_form() for m in tok.tokenize(s[:500], MODE) if m.part_of_speech()[0] == "名詞" and m.part_of_speech()[1] == "普通名詞" and m.normalized_form() in WI}
 WSPLIT = lambda t: [s for x in t.split("\n") for s in re.split(r"(?<=[。！？])", x) if len(s.strip()) > 1]   # 行と「。！？」で文に分ける
-if SOURCE == "web3":                                                                        # 持ち主が集めた Web 小説（実験だけ、2026-10-31）。学習用の側（話の id の crc32 が 10 で割り切れないもの）
+if SOURCE == "web2":                                                                        # 同じ Web 小説を元の HTML から取り直したもの（作品の区切りあり）。学習用 = 作品コードの crc32 が 10 で割り切れない作品
+    docs = [d for d in map(json.loads, open(f"{PRIV}/data/text/webnovels2.jsonl", encoding="utf-8")) if zlib.crc32(d["work"].encode()) % 10 != 0]
+    split = lambda d: WSPLIT(d["text"])
+elif SOURCE == "web3":                                                                        # 持ち主が集めた Web 小説（実験だけ、2026-10-31）。学習用の側（話の id の crc32 が 10 で割り切れないもの）
     docs = [d for d in map(json.loads, open(f"{PRIV}/data/text/webnovels3.jsonl", encoding="utf-8")) if zlib.crc32(d["id"].encode()) % 10 != 0]
     split = lambda d: WSPLIT(d["text"])
 elif SOURCE == "conv":
@@ -31,13 +34,14 @@ else:
 N = collections.defaultdict(collections.Counter); TOT = collections.Counter()
 for i, d in enumerate(docs):
     NS = [nouns(s) for s in split(d)]
+    wt = 0.1 if d.get("r15") else 1.0                                                       # R15 の話は重みを下げる（持ち主の方針）
     for k in range(len(NS)):
         for j in (k - 1, k + 1):                                                            # すぐ前・すぐ後の文
             if 0 <= j < len(NS):
                 for x in NS[k]:
                     for y in NS[j]:
                         if y != x:
-                            N[x][y] += 1
+                            N[x][y] += wt
         TOT.update(NS[k])
     if i % 100 == 0:
         print(i, len(docs), f"{time.time() - t0:.0f} 秒", flush=True)
