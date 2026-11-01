@@ -25,6 +25,8 @@ ap.add_argument("--batch", type=int, default=256)
 ap.add_argument("--rows", type=int, default=2048)
 ap.add_argument("--plates", type=int, default=16)
 ap.add_argument("--quick", action="store_true")
+ap.add_argument("--enc", default="phase")                                                  # phase: 位置 = 位相 / freq: 位置と品詞の組ごとに別の周波数（1 + 品詞 + 81 × 位置）
+ap.add_argument("--ref", action="store_true")                                              # いつも点いている光（参照の光）を足す。位相は参照がないと読めない（2026-11-01 の気づき）
 a = ap.parse_args()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from goban_batch import init_plates, _h, VAL0
@@ -115,15 +117,23 @@ def score(P, X, M):
 # ---- 光の器（文法シンセ） ----
 N, K = a.rows, a.plates; H = _h(dev, N)
 yy = torch.arange(N, dtype=torch.float32, device=dev)
-WAVE = torch.stack([torch.exp(1j * 2 * math.pi * (k + 1) * yy / N) / math.sqrt(N) for k in range(NL + 1)]).to(torch.complex64)   # 品詞 80 + 穴
+NF = (NL + 1) * L if a.enc == "freq" else NL + 1                                            # 入口の周波数の数（freq なら 位置 × (品詞 80 + 穴)）
+WAVE = torch.stack([torch.exp(1j * 2 * math.pi * (k + 1) * yy / N) / math.sqrt(N) for k in range(NF + 1)]).to(torch.complex64)   # 最後 = 参照の光
 PH = torch.exp(1j * 2 * math.pi * torch.arange(L, device=dev) / 25).to(torch.complex64)
 
 
 def encode(X, M):
     X = X.to(dev); M = M.to(dev); has = (X >= 0)
     idx = torch.where(M, torch.full_like(X, HOLE), X.clamp(min=0))
-    u = torch.einsum("bt,btn->bn", has.to(torch.complex64) * PH[None], WAVE[idx])
-    return u / u.abs().pow(2).sum(-1, keepdim=True).sqrt().clamp(min=1e-9)
+    if a.enc == "freq":
+        idx = idx + (NL + 1) * torch.arange(L, device=dev)[None]                             # 位置ごとに別の周波数の組
+        u = torch.einsum("bt,btn->bn", has.to(torch.complex64), WAVE[idx])
+    else:
+        u = torch.einsum("bt,btn->bn", has.to(torch.complex64) * PH[None], WAVE[idx])
+    u = u / u.abs().pow(2).sum(-1, keepdim=True).sqrt().clamp(min=1e-9)
+    if a.ref:
+        u = (u + WAVE[NF][None]) / math.sqrt(2)                                              # 参照の光（位相を読むための、いつも点いている光）
+    return u
 
 
 def forward(P, u):
@@ -149,7 +159,7 @@ for st in range(a.steps):
     opt.zero_grad(); loss.backward(); opt.step(); sched.step()
     if st % 500 == 0:
         print(st, "回", round(float(loss), 4), f"{time.time() - t0:.0f} 秒", flush=True)
-res = dict(exp="85", units=len(Xtr), labels=NL, rows=N, plates=K, steps=a.steps)
+res = dict(exp="85", enc=a.enc, ref=a.ref, units=len(Xtr), labels=NL, rows=N, plates=K, steps=a.steps)
 # 次の品詞: 区切りの中の位置 t（1 以上）をでたらめに選び、t より後ろを消して（ここまでしか見えない）、t を抜く
 NEXT_T = torch.tensor([int(torch.randint(1, max(2, int(n)), (1,), generator=g)) for n in (Xte >= 0).sum(1)])
 Xnext = Xte.clone()
@@ -171,6 +181,6 @@ for name, rate, last in (("穴埋め 15%", 0.15, False), ("穴埋め 30%", 0.30,
     res[name] = r
     print(name, r, flush=True)
 res["sec"] = time.time() - t0
-torch.save(dict(P=P.detach().cpu(), labels=LABS), f"{PRIV}/models/synth_fill.pt")
+torch.save(dict(P=P.detach().cpu(), labels=LABS, enc=a.enc, ref=a.ref), f"{PRIV}/models/synth_fill_{a.enc}{'_ref' if a.ref else ''}.pt")
 with open("results/exp85.txt", "a", encoding="utf-8") as f:
     f.write(json.dumps(res, ensure_ascii=False) + "\n")
