@@ -26,7 +26,8 @@ ap.add_argument("--rows", type=int, default=2048)
 ap.add_argument("--plates", type=int, default=16)
 ap.add_argument("--quick", action="store_true")
 ap.add_argument("--enc", default="phase")                                                  # phase: 位置 = 位相 / freq: 位置と品詞の組ごとに別の周波数（1 + 品詞 + 81 × 位置）
-ap.add_argument("--ref", action="store_true")                                              # いつも点いている光（参照の光）を足す。位相は参照がないと読めない（2026-11-01 の気づき）
+ap.add_argument("--ref", action="store_true")
+ap.add_argument("--kerr", type=float, default=0.0)                                         # 板の真ん中でカー効果（明るいほど位相が遅れる、実験54）。となりとの組み合わせを覚えやすくする試み                                              # いつも点いている光（参照の光）を足す。位相は参照がないと読めない（2026-11-01 の気づき）
 a = ap.parse_args()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from goban_batch import init_plates, _h, VAL0
@@ -141,6 +142,10 @@ def forward(P, u):
     for k in range(K):
         u = torch.cat([u[..., :N] * torch.exp(1j * P[:, k]), u[..., N:]], -1)
         u = torch.fft.ifft(torch.fft.fft(u, dim=-1, norm="ortho") * H, dim=-1, norm="ortho")
+        if a.kerr and k == K // 2 - 1:                                                       # 真ん中の焦点面（周波数の面）でカー効果: 明るさ ÷ 平均 に比例して位相が遅れる
+            f = torch.fft.fft(u, dim=-1, norm="ortho"); I0 = f.abs() ** 2
+            f = f * torch.exp(1j * a.kerr * I0 / I0.mean(-1, keepdim=True).clamp(min=1e-12))
+            u = torch.fft.ifft(f, dim=-1, norm="ortho")
     I = torch.fft.fft(u[..., :N], dim=-1, norm="ortho").abs() ** 2
     out = I[:, VAL0:VAL0 + L * NL].reshape(-1, L, NL)
     return out / out.sum(-1, keepdim=True).clamp(min=1e-12)                                  # 位置ごとに割合へ
@@ -159,7 +164,7 @@ for st in range(a.steps):
     opt.zero_grad(); loss.backward(); opt.step(); sched.step()
     if st % 500 == 0:
         print(st, "回", round(float(loss), 4), f"{time.time() - t0:.0f} 秒", flush=True)
-res = dict(exp="85", enc=a.enc, ref=a.ref, units=len(Xtr), labels=NL, rows=N, plates=K, steps=a.steps)
+res = dict(exp="85", enc=a.enc, ref=a.ref, kerr=a.kerr, units=len(Xtr), labels=NL, rows=N, plates=K, steps=a.steps)
 # 次の品詞: 区切りの中の位置 t（1 以上）をでたらめに選び、t より後ろを消して（ここまでしか見えない）、t を抜く
 NEXT_T = torch.tensor([int(torch.randint(1, max(2, int(n)), (1,), generator=g)) for n in (Xte >= 0).sum(1)])
 Xnext = Xte.clone()
@@ -181,6 +186,6 @@ for name, rate, last in (("穴埋め 15%", 0.15, False), ("穴埋め 30%", 0.30,
     res[name] = r
     print(name, r, flush=True)
 res["sec"] = time.time() - t0
-torch.save(dict(P=P.detach().cpu(), labels=LABS, enc=a.enc, ref=a.ref), f"{PRIV}/models/synth_fill_{a.enc}{'_ref' if a.ref else ''}.pt")
+torch.save(dict(P=P.detach().cpu(), labels=LABS, enc=a.enc, ref=a.ref), f"{PRIV}/models/synth_fill_{a.enc}{'_ref' if a.ref else ''}_k{K}{'_kerr' if a.kerr else ''}.pt")
 with open("results/exp85.txt", "a", encoding="utf-8") as f:
     f.write(json.dumps(res, ensure_ascii=False) + "\n")
