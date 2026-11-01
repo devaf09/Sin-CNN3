@@ -37,8 +37,8 @@ PRIV = "D:/AI_git/Sin-CNN3_private"
 MODEL = os.environ.get("MODEL", "v2"); DEEP = os.environ.get("DEEP") == "1"; TAG = os.environ.get("TAG", "76")
 Ps = []; WORDS = []
 for k in (0, 1):
-    M = torch.load(f"{PRIV}/models/goban_{MODEL}_part{k}{'_scratch' if MODEL == 'v3' else ''}.pt", weights_only=False); Ps.append(M["P"]); WORDS += M["words"]
-VIEWS = M["views"]; NVIEW, NVAL = 9, 45; WI = {w: i for i, w in enumerate(WORDS)}
+    M = torch.load(f"{PRIV}/models/goban_{MODEL}_part{k}{'_scratch' if MODEL in ('v3', 'v4') else ''}.pt", weights_only=False); Ps.append(M["P"]); WORDS += M["words"]
+VIEWS = M["views"]; NVIEW, NVAL = 9, len(M["vals"][M["views"][0]]); WI = {w: i for i, w in enumerate(WORDS)}   # 値の席（v2・v3 = 45、v4 = 490）
 INV = {(j, r): x for j, v in enumerate(VIEWS) for x, r in M["pos"][v].items()}            # 出口の場所 → 値の名前
 with torch.no_grad():
     P = torch.cat(Ps); B3 = torch.cat([run(P[i:i + 1500], NVIEW, NVAL + NVIEW) for i in range(0, len(WORDS), 1500)])
@@ -46,7 +46,7 @@ with torch.no_grad():
 #   語 w の出口の光 E_w を、語板 k の出口に逆から入れると、入口の観点 v に戻る光 = |⟨k の観点 v の出口の光, E_w の観点 v⟩|²（光の通り道は逆にもたどれる）。
 #   「明るさ」版は位相を見ない（明るさどうしの内積）、「位相込み」版は複素の光の内積。どちらも「その他」を含む出口全部。
 with torch.no_grad():
-    FF = torch.cat([field(P[i:i + 1500], NVIEW, NVAL + NVIEW) for i in range(0, len(WORDS), 1500)]) if os.environ.get("FAST") != "1" else torch.zeros(len(WORDS), NVIEW, NVAL + NVIEW, dtype=torch.complex64)   # (語, 観点, 出口) 複素の光
+    FF = torch.cat([field(P[i:i + 1500], NVIEW, NVAL + NVIEW) for i in range(0, len(WORDS), 1500)]) if os.environ.get("FAST") != "1" else torch.zeros(1, NVIEW, NVAL + NVIEW, dtype=torch.complex64)   # (語, 観点, 出口) 複素の光
 IRAW = FF.abs() ** 2
 FFn = (FF[..., :NVAL].abs() ** 2).sum(-1)                                                   # (語, 観点) 値の出口に来た光の量                                                                        # 出口の明るさ（割合にしない、そのままの光）
 B3 = B3 / B3.sum(-1, keepdim=True).clamp(min=1e-12)                                         # (語, 観点, 出口) 観点ごとの割合
@@ -60,7 +60,7 @@ aname = lambda a: f"{VIEWS[a // NVAL]} {INV.get((a // NVAL, a % NVAL), '?')}"   
 print("語板", len(WORDS), f"{time.time() - t00:.0f} 秒", flush=True)
 
 # ---- 属性樹（実験71 と同じ: 共通の度合いの大きい属性で枝分かれ、深さ 4、1 つの節から最大 6 本） ----
-has = FL >= torch.clamp(3 * prior, min=0.05)                                               # (語, 属性) その属性を持つか
+has = FL >= torch.clamp(3 * prior, min=0.05 * 45 / NVAL)                              # 属性を持つ: 全体の 3 倍以上（席が多いほど 1 つの値の割合は小さいので、下限も席の数で割る）                                               # (語, 属性) その属性を持つか
 nodes = [dict(depth=0, members=torch.arange(len(WORDS)), attr=None, parent=None)]
 
 
