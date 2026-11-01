@@ -26,6 +26,7 @@ ap.add_argument("--unit", default="line")                                       
 ap.add_argument("--method", default="1")                                                   # 1・2・3・4、base（光を使わない比べ）
 ap.add_argument("--steps", type=int, default=3000)
 ap.add_argument("--batch", type=int, default=512)
+ap.add_argument("--bias", action="store_true")                                             # 直し（2026-11-01）: いつも点いている光（周波数 NL + 1）を入口に足し、全体の割合を覚える道を作る
 a = ap.parse_args()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import goban_batch
@@ -130,7 +131,7 @@ def tensors(pairs):
 
 Xtr, Wtr, Btr, Ftr = tensors(PAIRS["train"]); Xte, Wte, Bte, Fte = tensors(PAIRS["test"])
 print("テンソル", f"{time.time() - t0:.0f} 秒", flush=True)
-res = dict(exp="84", unit=a.unit, method=a.method, pairs=len(PAIRS["train"]), labels=NL, steps=a.steps)
+res = dict(exp="84", bias=a.bias, unit=a.unit, method=a.method, pairs=len(PAIRS["train"]), labels=NL, steps=a.steps)
 bits_bag = lambda P, Y: float(-(Y * torch.log2(P.clamp(min=1e-9))).sum() / Y.shape[0])
 acc_first = lambda P3, F: [float((P3[:, t].argmax(-1) == F[:, t])[F[:, t] >= 0].float().mean()) for t in range(3)]
 if a.method == "base":
@@ -168,7 +169,7 @@ if a.method == "base":
 else:
     N, K = 512, 16; H = _h(dev, N)
     y = torch.arange(N, dtype=torch.float32, device=dev)
-    WAVE = torch.stack([torch.exp(1j * 2 * math.pi * (k + 1) * y / N) / math.sqrt(N) for k in range(NL)]).to(torch.complex64)   # 品詞 k = 周波数 k + 1
+    WAVE = torch.stack([torch.exp(1j * 2 * math.pi * (k + 1) * y / N) / math.sqrt(N) for k in range(NL + 1)]).to(torch.complex64)   # 品詞 k = 周波数 k + 1（最後 = いつも点いている光）
     conv = a.method in ("2", "4")
     PH = torch.exp(1j * 2 * math.pi * torch.arange(L_MAX + 2, device=dev) / 25).to(torch.complex64)   # 位置の位相
 
@@ -180,7 +181,10 @@ else:
             ph = 0.5 * PH[0:L_MAX][None] + ph + 0.5 * PH[2:L_MAX + 2][None]
         coef = (m * ph)                                                                      # (組, 位置) の複素の重み
         u = torch.einsum("bt,btn->bn", coef, WAVE[X.clamp(min=0)])
-        return u / u.abs().pow(2).sum(-1, keepdim=True).sqrt().clamp(min=1e-9)               # 光の強さをそろえる
+        u = u / u.abs().pow(2).sum(-1, keepdim=True).sqrt().clamp(min=1e-9)                 # 光の強さをそろえる
+        if a.bias:
+            u = (u + WAVE[NL][None]) / math.sqrt(2)                                          # いつも点いている光（全体の割合の道）
+        return u
 
     def forward(P, u):
         u = torch.nn.functional.pad(u, (0, N))
@@ -192,7 +196,7 @@ else:
         return out / out.sum(-1, keepdim=True).clamp(min=1e-12)
 
     P = init_plates(1, 0, dev, N, K)[0].requires_grad_(True)
-    opt = torch.optim.Adam([P], lr=0.02)
+    opt = torch.optim.Adam([P], lr=0.02); sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, a.steps)   # 学習率を途中で下げる（直し）
     for st in range(a.steps):
         idx = torch.randint(0, len(Xtr), (a.batch,))
         o = forward(P, encode(Xtr[idx], Wtr[idx]))
@@ -200,7 +204,7 @@ else:
         for t in range(3):
             m = (Ftr[idx, t] >= 0).to(dev)
             loss = loss - torch.log(o[:, t + 1].gather(-1, Ftr[idx, t].clamp(min=0).to(dev)[:, None])[:, 0] + 1e-9)[m].mean()
-        opt.zero_grad(); loss.backward(); opt.step()
+        opt.zero_grad(); loss.backward(); opt.step(); sched.step()
         if st % 500 == 0:
             print(a.unit, a.method, st, "回", round(float(loss), 4), f"{time.time() - t0:.0f} 秒", flush=True)
     with torch.no_grad():
