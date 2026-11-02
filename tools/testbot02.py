@@ -7,7 +7,7 @@
   「自信」: 1 位の点が低いとき（共鳴の手がかりが無いとき）は「よく分からない」と正直に返す（実験62 の考えの最初の形）。
 実行: python tools/testbot02.py "発言 1" "発言 2" …（引数が無ければ、決まった例で動かす）
 """
-import json, math, random, sys, zlib
+import json, math, random, re, sys, zlib
 
 import torch
 from collections import Counter, defaultdict
@@ -114,15 +114,59 @@ def last_predicate(ms):
     return (emo or idx or [None])[-1]
 
 
-def backtrack(user):
-    """「昨日、映画を見てすごく感動したよ」→「感動したんですね」。相手の述語（感情の語を優先）を、くだけた形 + んですね で返す。質問には返さない。"""
+# ---- 格逆算グレイン（実験119）: 動詞の格の好み P(名詞 | 動詞, 格)。省略された格を、会話に出た名詞から補う ----
+import os, pickle
+_FP = "D:/AI_git/Sin-CNN3_private/models/case_frames_119.pkl"
+if os.path.exists(_FP):
+    FR, FRN = pickle.load(open(_FP, "rb"))
+else:
+    FR = defaultdict(Counter); FRN = Counter()
+    for _s, turns in convs["train"]:
+        for t in turns:
+            ms_ = list(tok.tokenize(t))
+            for i, m in enumerate(ms_):
+                pos = m.part_of_speech()
+                if pos[0] == "名詞" and pos[1] in ("普通名詞", "固有名詞") and len(m.surface()) >= 2:
+                    FRN[m.normalized_form()] += 1
+                    if i + 1 < len(ms_) and ms_[i + 1].surface() in ("が", "を", "に") and ms_[i + 1].part_of_speech()[1] == "格助詞":
+                        v = next((x for x in ms_[i + 2:i + 6] if x.part_of_speech()[0] == "動詞" and x.part_of_speech()[1] != "非自立可能"), None)
+                        if v is not None:
+                            FR[(v.normalized_form(), ms_[i + 1].surface())][m.normalized_form()] += 1
+    pickle.dump((FR, FRN), open(_FP, "wb"))
+_FRT = sum(FRN.values())
+
+
+def recover_case(verb, history):
+    """動詞に「を・に」が無いとき、会話に出た名詞の中から、格の好みでいちばん合う「名詞 + 格」を補う（強く合う時だけ）。"""
+    nouns = []
+    for u in history[-4:]:
+        for m in tok.tokenize(u):
+            if m.part_of_speech()[0] == "名詞" and m.part_of_speech()[1] in ("普通名詞", "固有名詞") and len(m.surface()) >= 2:
+                nouns.append((m.normalized_form(), m.surface()))
+    best = None
+    for c in ("を", "に"):
+        cnt = FR.get((verb, c))
+        if not cnt:
+            continue
+        tot = sum(cnt.values())
+        for n, surf in nouns:
+            lift = (cnt[n] / tot) / ((FRN[n] + 1) / _FRT) if cnt[n] >= 2 else 0               # この動詞の格に、その名詞が全体よりどれだけ来やすいか
+            if lift > 5 and (best is None or lift > best[0]):
+                best = (lift, surf + c)
+    return best[1] if best else ""
+
+
+def backtrack(user, history=()):
+    """「昨日、映画を見てすごく感動したよ」→「感動したんですね」。相手の述語（感情の語を優先）を、くだけた形 + んですね で返す。質問には返さない。
+    「何を」が省かれていれば、前の会話から補う（「昨日食べたよ」→「ラーメンを食べたんですね」）。"""
     if isq(user) or any(g in user for g in GREET_F):
         return ""                                                                              # 問いとあいさつには「〜んですね」で受けない（遷移: あいさつ → あいさつ・問い）
     ms = morphs(user); k = last_predicate(ms)
     if k is None:
         return ""
     j = k + 1
-    while j < len(ms) and (ms[j][2].startswith(FUNC117) or "非自立" in ms[j][2]) and not ms[j][2].startswith(("助詞-接続助詞", "補助記号")):
+    while j < len(ms) and (ms[j][2].startswith(FUNC117) or "非自立" in ms[j][2]) and not ms[j][2].startswith("補助記号") and not (
+            ms[j][2].startswith("助詞-接続助詞") and not (j + 1 < len(ms) and "非自立" in ms[j + 1][2])):   # 行って + みたい のように、て の後ろが補助の動詞なら続ける
         j += 1
     core, tail = split117(ms[k:j]); tail, _ = peel(tail)
     tail = [w for w in tail if not w[2].startswith("助詞-終助詞")]
@@ -130,6 +174,10 @@ def backtrack(user):
         tail = tail[:-1]                                                                       # 〜んだ・〜のだ・〜で（説明・つなぎ）は外して「んですね」に付け替える
     lem = ms[k][1]; pos = ms[k][2]
     arg = argument(ms, k)                                                                      # 持ち主の案: 「何に・何が」どうした
+    if pos.startswith("動詞") and (not arg or arg.endswith(("で", "と"))):
+        rec = recover_case(lem, list(history))                                                 # 省かれた「を・に」を前の会話から補う（実験119）
+        if rec:
+            arg = rec
     if pos.startswith(("名詞", "形状詞")) and not [w for w in tail if w[1] not in ("だ", "で")]:
         return arg + "".join(w[0] for w in core) + "なんですね。"                             # 散歩が大変で → 散歩が大変なんですね
     if not tail:
@@ -187,10 +235,12 @@ def related_question(user, history):
     nouns.sort(key=lambda m: (m.part_of_speech()[1] != "固有名詞", NOUNF[m.normalized_form()]))
     said = "".join(history)
     for m in nouns:
+        if m.part_of_speech()[1] != "固有名詞":
+            continue                                                                           # 普通名詞からの「〜ですか？」は外れやすい（挑戦ですか？）ので、固有名詞（北海道 → 札幌）だけ
         x = m.normalized_form(); c = CO.get(x)
         if not c or NOUNF[x] < 5:
             continue
-        best = max(((v / math.sqrt(NOUNF[y] + 10), y) for y, v in c.items() if v >= 3 and y not in said and NOUNF[y] >= 5 and len(y) >= 2 and y not in STOP and not all("ぁ" <= ch <= "ゖ" for ch in y)), default=None)   # ひらがなだけの語（こと・もの）は外す
+        best = max(((v / math.sqrt(NOUNF[y] + 10), y) for y, v in c.items() if v >= 10 and y not in said and NOUNF[y] >= 5 and len(y) >= 2 and y not in STOP and not all("ぁ" <= ch <= "ゖ" for ch in y)), default=None)   # ひらがなだけの語（こと・もの）は外す
         if best:
             return f"{best[1]}ですか？"
     return None
@@ -212,7 +262,7 @@ def unknown_word(user):
 
 def reply(history):
     """感情（「何に」どうした、のバックトラッキング）→ 内容（揺らした 10 通りの票で選ぶ）→ 質問（話題を続ける）。知らない語は聞き返す。"""
-    bt = backtrack(history[-1])
+    bt = backtrack(history[-1], history[:-1])
     new = unknown_word(history[-1])
     if new:                                                                                    # 知らない語は共感を弱める（持ち主 2026-11-02: 分からないまま「〜んですね」と受けると不自然）
         return f"「{new}」って何ですか？ 初めて聞きました。", 0.0
@@ -221,7 +271,11 @@ def reply(history):
         return bt + "もう少し教えてもらえますか？", 0.0
     best, conf = ensemble(scored)
     parts = [bt]
-    if conf < 0.5:                                                                             # 票が割れた = 自信がない → 内容は出さず、話題を続ける質問
+    if conf < 0.5:                                                                             # 票が割れた = 自信がない → 内容は出さず、話題の名詞について「どんな〜」と聞く
+        m_ = re.match(r"(.+?)[をにが]", bt)
+        if m_ and 1 < len(m_.group(1)) <= 8:
+            past = "た" in bt[m_.end():]
+            return bt + f"どんな{m_.group(1)}{'でした' if past else 'です'}か？", conf
         rq = related_question(history[-1], history)
         if rq:
             return bt + rq, conf
@@ -231,9 +285,31 @@ def reply(history):
         rq = related_question(history[-1], history + [best])
         if rq:
             parts.append(rq)
-    return "".join(p for p in parts if p).replace("？。", "？").replace("！。", "！"), conf
+    out = ""
+    for p_ in parts:
+        if p_:
+            out += ("。" if out and not out.endswith(("。", "！", "？", "?", "!", "）", "w", "笑")) else "") + p_   # つなぎ目に句点
+    return out.replace("？。", "？").replace("！。", "！"), conf
 
 
+if ARGS[:1] == ["--chat"]:                                                                     # 手元で話す: python tools/testbot02.py --chat（空行で終わる）
+    hist = []
+    while True:
+        try:
+            u = input("人: ").strip()
+        except EOFError:
+            break
+        if not u:
+            break
+        hist.append(u); r, sc = reply(hist); hist.append(r)
+        print("ボット:", r, f"（自信 {sc:.1f}）", flush=True)
+    sys.exit(0)
+if ARGS[:1] == ["--dialog"]:                                                                   # 続いた会話の試し: 発言を順に渡す（前の会話が格の逆算・遷移に効く）
+    hist = []
+    for u in ARGS[1:]:
+        hist.append(u); r, sc = reply(hist); hist.append(r)
+        print("人:", u); print("ボット:", r, f"（自信 {sc:.1f}）", flush=True)
+    sys.exit(0)
 tests = ARGS or ["昨日、映画を見てすごく感動したよ", "こんにちは！最近ラーメンにはまってるんだ", "休みの日は何をしていますか？", "犬を飼っているんですが、散歩が大変で", "明日から旅行で北海道に行きます", "最近寝不足でつらいよ", "週末にポポロンタをやったよ"]
 out = []
 for u in tests:
