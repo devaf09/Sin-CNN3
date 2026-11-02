@@ -190,8 +190,8 @@ def reply(history):
     """感情（「何に」どうした、のバックトラッキング）→ 内容（揺らした 10 通りの票で選ぶ）→ 質問（話題を続ける）。知らない語は聞き返す。"""
     bt = backtrack(history[-1])
     new = unknown_word(history[-1])
-    if new:
-        return bt + f"「{new}」って何ですか？ 初めて聞きました。", 0.0
+    if new:                                                                                    # 知らない語は共感を弱める（持ち主 2026-11-02: 分からないまま「〜んですね」と受けると不自然）
+        return f"「{new}」って何ですか？ 初めて聞きました。", 0.0
     scored = candidates(history)
     if not scored:
         return bt + "もう少し教えてもらえますか？", 0.0
