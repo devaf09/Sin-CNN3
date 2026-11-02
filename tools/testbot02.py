@@ -129,6 +129,29 @@ def self_answer(user, history):
     return None
 
 
+SHIFT_WORDS = ("ところで", "そういえば", "話は変わ", "話変わ", "全然関係ない", "別の話")
+TOPIC_SHIFT = False
+
+
+def topic_shift(history, th=1.0):
+    """前の話題（前の 4 発言の語、古いほど 0.7 倍）と今の発言のつながり（重なり + 共鳴）が 1.0 未満、または話題を変える言葉 → 話の方向が変わった。
+    実験121: 別の会話の発言をつないだ切り替わりを AUC 0.83 で見分ける（このしきい値で 切り替わり 59% を見つけ、続き 83% を続きとみなす）。"""
+    if len(history) < 3:
+        return False
+    u = history[-1]
+    if any(w in u for w in SHIFT_WORDS):
+        return True
+    ctxw = Counter()
+    for k_, c_ in enumerate(reversed(history[-5:-1])):
+        for w_ in analyze(c_)[0]:
+            ctxw[w_] += 0.7 ** k_
+    uw = analyze(u)[0]
+    if not uw or not ctxw:
+        return False
+    conn = sum(v for w, v in ctxw.items() if w in uw) / math.sqrt(len(uw)) + sum(v * pmi(x, y) for x, v in ctxw.items() for y in uw) / math.sqrt(len(uw) * sum(ctxw.values()))
+    return conn < th
+
+
 def candidates(history):
     uw, up = analyze(history[-1])
     s_user = tg_state(history[-2] if len(history) >= 2 else "", history[-1])                  # 相手の発言の状態
@@ -139,6 +162,10 @@ def candidates(history):
     if USER:
         for w_, c_ in sorted(USER.d["話題"].items(), key=lambda kv: -kv[1])[:10]:
             ctxw[w_] += 0.3                                                                    # 対話者グレインのよく出る話題も薄く
+    global TOPIC_SHIFT
+    TOPIC_SHIFT = topic_shift(history)
+    if TOPIC_SHIFT:
+        ctxw = Counter()                                                                       # 話の方向が変わった → 前の話題を切る（持ち主の案、実験121）
     keys = set(uw) | {y for x in uw for y in NEXT.get(x, [])[:40]} | {w_ for w_, v_ in ctxw.most_common(5)}
     cand = Counter()
     for y in keys:
@@ -291,7 +318,7 @@ def argument(ms, k):
         while j >= 0 and ms[j][2].startswith(("名詞", "接頭辞", "接尾辞")) and "副詞可能" not in ms[j][2]:   # 最近・今日 などは付けない
             j -= 1
         noun = "".join(w[0] for w in ms[j + 1:k - 1])
-        if noun and ms[k - 2][1] not in ("私", "僕", "俺", "自分", "何", "事", "物"):
+        if noun and ms[k - 2][1] not in ("私", "僕", "俺", "自分", "何", "事", "物", "こと", "もの", "所", "ところ", "の", "ん"):
             return noun + ms[k - 1][0]
     return ""
 
