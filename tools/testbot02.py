@@ -303,6 +303,31 @@ def unknown_word(user):
 
 
 USER_NAME = None
+PROB_EMO = ("大変", "困", "つら", "辛", "疲れ", "忙し", "悩", "心配", "不安", "面倒", "無理", "ヤバ", "やば", "焦")
+PROB_NEG = ("できな", "出来な", "終わらな", "間に合わな", "わからな", "分からな", "進まな", "うまくいかな", "上手くいかな", "決まらな", "足りな")   # 〜ない・〜なくて の両方
+
+
+def problem_score(user):
+    """相手が課題を抱えているか（持ち主の問い 2026-11-02）。困りごとの感情の語・したいのにの形・できないの形・言いさし を足す。"""
+    sc = 0.0
+    sc += 1.0 if any(e in user for e in PROB_EMO) else 0.0
+    sc += 1.0 if re.search(r"たい(んだ|んです|ん)?(けど|が|のに)", user) else 0.0
+    sc += 1.0 if any(n in user for n in PROB_NEG) else 0.0
+    sc += 0.5 if re.search(r"(けど|けれど|が|のに)[。…]*$", user.strip()) else 0.0
+    return sc
+
+
+def secretary_offer(user, bt):
+    """秘書の型の返事: 課題があるときは、中身を聞いて手伝いを申し出る。"""
+    m_ = re.match(r"(.+?)[をにが]", bt) or re.search(r"([一-龥ァ-ヶー]{2,8})(?:が|を)", user)   # 何が大変か: バックトラッキングの「何に」か、相手の発言の「〜が・〜を」
+    noun = m_.group(1) if m_ and 1 < len(m_.group(1)) <= 8 else None
+    if noun:
+        noun = re.sub(r"^(最近|今日|昨日|明日|今週|来週|先週|今)", "", noun) or None              # 時の語は外す（最近仕事 → 仕事）
+    if re.search(r"たい(んだ|んです|ん)?(けど|が|のに)", user) and noun:
+        return f"どんな{noun}がありますか？ よければ一緒に整理しましょう。"
+    if noun:
+        return f"{noun}のどんなところが一番大変ですか？ 何かお手伝いできることがあれば言ってくださいね。"
+    return "どんなところが一番大変ですか？ 何かお手伝いできることがあれば言ってくださいね。"
 
 
 def reply(history):
@@ -319,6 +344,8 @@ def reply(history):
     if sa:                                                                                     # 自己紹介・自分についての質問はプロフィールから
         return sa, 1.0
     bt = backtrack(history[-1], history[:-1])
+    if PROF.get("役割") == "秘書" and not isq(history[-1]) and problem_score(history[-1]) >= 1.0:
+        return bt + secretary_offer(history[-1], bt), 1.0                                      # 課題がありそう → 秘書の型（中身を聞いて手伝いを申し出る）
     new = unknown_word(history[-1])
     if new:                                                                                    # 知らない語は共感を弱める（持ち主 2026-11-02: 分からないまま「〜んですね」と受けると不自然）
         return f"「{new}」って何ですか？ 初めて聞きました。", 0.0
