@@ -7,6 +7,7 @@
 | 文書 | 中身 |
 |---|---|
 | [overview.md](overview.md) | いまの状態が一目で分かるページ |
+| [library.md](library.md) | ライブラリ sincnn3 の説明書（入れ方・言葉・部品・使い方・制限） |
 | [unique_results.md](unique_results.md) | 既存の AI やシステムにない成果と、そのしくみ |
 | [summary_20261027.md](summary_20261027.md) | 初日のまとめ（実験01〜26） |
 | [summary_20261031.md](summary_20261031.md) | 一時まとめ（実験55〜77） |
