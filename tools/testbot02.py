@@ -55,9 +55,11 @@ def tg_state(prev, t):
 # ---- キャラクタのプロフィール（持ち主が書いたもの、data/characters/）: 自己紹介・自分についての質問・返事選びの軽いバイアス ----
 CHAR_PATH = next((a.split("=", 1)[1] for a in ARGS if a.startswith("--char=")), "data/characters/secretary_kotoyui_tonari.json")
 ARGS = [a for a in ARGS if not a.startswith("--char=")]
-PROF = json.load(open(CHAR_PATH, encoding="utf-8"))
-PBIAS = set(analyze(" ".join(PROF.get("バイアスの語", []) + [PROF.get("興味のある内容", ""), PROF.get("好きな会話", ""), PROF.get("今の目標", "")]))[0])
-PW = PROF.get("バイアスの強さ", 0.2)
+PROF = json.load(open(CHAR_PATH, encoding="utf-8"))                                            # プロフィール（事実・自己紹介の文、持ち主が書く）
+PERS = json.load(open(CHAR_PATH.replace(".json", ".persona.json"), encoding="utf-8"))          # 人格グレイン（選び方の重み、持ち主の案 2026-11-02）
+PWT = PERS["重み"]
+PBIAS = set(analyze(" ".join(PERS.get("興味の語", []) + [PROF.get("興味のある内容", ""), PROF.get("好きな会話", ""), PROF.get("今の目標", "")]))[0])
+PW = PWT.get("興味の語へのバイアス", 0.2)
 OTHER_SELF = [x for x in ("僕", "俺", "あたし", "わし", "おいら", "わたし", "私") if x != PROF.get("一人称", "私") and not (PROF.get("一人称") == "私" and x == "わたし")]
 
 
@@ -343,19 +345,19 @@ def reply(history):
     sa = self_answer(history[-1], history)
     if sa:                                                                                     # 自己紹介・自分についての質問はプロフィールから
         return sa, 1.0
-    bt = backtrack(history[-1], history[:-1])
-    interest = PROF.get("課題解決への興味", 0.0)                                                # プロフィールの特徴（持ち主の案）: 大きいほど課題に気づきやすい
+    bt = backtrack(history[-1], history[:-1]) if random.random() < PWT.get("共感の強さ", 1.0) else ""   # 共感の強さ = 「〜んですね」で受ける割合
+    interest = PWT.get("課題解決への興味", 0.0)                                                  # 人格グレインの重み: 大きいほど課題に気づきやすい
     if interest > 0 and not isq(history[-1]) and problem_score(history[-1]) >= 1.0 / interest:
         return bt + secretary_offer(history[-1], bt), 1.0                                      # 課題がありそう → 中身を聞いて手伝いを申し出る
     new = unknown_word(history[-1])
-    if new:                                                                                    # 知らない語は共感を弱める（持ち主 2026-11-02: 分からないまま「〜んですね」と受けると不自然）
+    if new and random.random() < PWT.get("知らない語を聞き返す強さ", 1.0):                      # 知らない語は共感を弱める（持ち主 2026-11-02: 分からないまま「〜んですね」と受けると不自然）
         return f"「{new}」って何ですか？ 初めて聞きました。", 0.0
     scored = candidates(history)
     if not scored:
         return bt + "もう少し教えてもらえますか？", 0.0
     best, conf = ensemble(scored)
     parts = [bt]
-    if conf < 0.5:                                                                             # 票が割れた = 自信がない → 内容は出さず、話題の名詞について「どんな〜」と聞く
+    if conf < PWT.get("自信のしきい値", 0.5):                                                    # 票が割れた = 自信がない → 内容は出さず、話題の名詞について「どんな〜」と聞く
         m_ = re.match(r"(.+?)[をにが]", bt)
         if m_ and 1 < len(m_.group(1)) <= 8:
             past = "た" in bt[m_.end():]
@@ -365,7 +367,7 @@ def reply(history):
             return bt + rq, conf
         parts.append("（自信がないけど）")
     parts.append(to_polite(best))
-    if not isq(best) and len(best) < 30:                                                        # 長い返事には質問を足さない
+    if not isq(best) and len(best) < 30 and random.random() < PWT.get("質問の多さ", 1.0) * PWT.get("話題を続ける強さ", 1.0):   # 長い返事には質問を足さない
         rq = related_question(history[-1], history + [best])
         if rq:
             parts.append(rq)
