@@ -79,7 +79,7 @@ def self_answer(user, history):
     if any(x in u for x in ("嫌いな", "苦手")):
         return f"{PROF['嫌いな会話']}は、少し苦手です。"
     if any(x in u for x in ("興味", "趣味")):
-        return f"{PROF['興味のある内容']}に興味があります。どんなふうに考えるのか、聞くのが好きなんです。"
+        return f"{PROF['興味のある内容']}に興味があります。お話を聞いて、一緒に考えるのが好きなんです。"
     if any(x in u for x in ("何してる", "仕事", "目標", "何ができる", "何をしてる")):
         return f"今は、お話しする方の{PROF['役割']}のようなお手伝いができるようになりたいと思っています。"
     if any(x in u for x in ("どうやって", "どこから来", "生まれ", "仕組み")):
@@ -344,8 +344,9 @@ def reply(history):
     if sa:                                                                                     # 自己紹介・自分についての質問はプロフィールから
         return sa, 1.0
     bt = backtrack(history[-1], history[:-1])
-    if PROF.get("役割") == "秘書" and not isq(history[-1]) and problem_score(history[-1]) >= 1.0:
-        return bt + secretary_offer(history[-1], bt), 1.0                                      # 課題がありそう → 秘書の型（中身を聞いて手伝いを申し出る）
+    interest = PROF.get("課題解決への興味", 0.0)                                                # プロフィールの特徴（持ち主の案）: 大きいほど課題に気づきやすい
+    if interest > 0 and not isq(history[-1]) and problem_score(history[-1]) >= 1.0 / interest:
+        return bt + secretary_offer(history[-1], bt), 1.0                                      # 課題がありそう → 中身を聞いて手伝いを申し出る
     new = unknown_word(history[-1])
     if new:                                                                                    # 知らない語は共感を弱める（持ち主 2026-11-02: 分からないまま「〜んですね」と受けると不自然）
         return f"「{new}」って何ですか？ 初めて聞きました。", 0.0
