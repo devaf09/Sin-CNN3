@@ -129,6 +129,7 @@ def self_answer(user, history):
     return None
 
 
+EXPERIENCE = re.compile(r"(昔|実家|子供の(頃|時|ころ)|子どもの(頃|時|ころ)|学生の(頃|時|ころ)|(私|わたし|自分)(は|も|自身|の場合)|うちは|私は.{0,12}(ました|ました。|てました|ています|てます|でした)|僕|うちの|母が|父が|夫が|妻が|旦那|彼氏|彼女が|始めました|行きました|行ってきました|食べました|してました|してます)")
 SHIFT_WORDS = ("ところで", "そういえば", "話は変わ", "話変わ", "全然関係ない", "別の話")
 TOPIC_SHIFT = False
 
@@ -189,7 +190,10 @@ def candidates(history):
         f_prof = float(bool(cw_ & PBIAS))                                                       # キャラの興味・目標の語を含むか（軽いバイアス）
         f_clk = CLOCK.score(t)                                                                  # 時計グレイン: 時間帯の語は少し上げ、季節外れの語は下げる
         f_ctx = sum(v_ for w_, v_ in ctxw.items() if w_ in cw_ and w_ not in uw) / math.sqrt(len(cw_) + 1)   # 前の会話の話題と重なるか
-        scored.append((f_over + f_res + 0.3 * f_tone + 0.5 * f_tr + PW * f_prof + f_clk + 0.5 * f_ctx, t, (f_over, f_res, f_tone, f_tr, f_prof, f_clk, f_ctx)))   # 点・発言・手がかり
+        f_exp = float(bool(EXPERIENCE.search(t)))                                               # 自分の体験談（昔・実家・私も〜した…）か: キャラの生い立ちと食い違うので下げる
+        f_ask = float(isq(t) and bool(re.search(r"(ですか|ますか|ました？|ました\?|でしたか|んですか)", t)))   # 相手への問い
+        scored.append((f_over + f_res + 0.3 * f_tone + 0.5 * f_tr + PW * f_prof + f_clk + 0.5 * f_ctx - PWT.get("体験談を下げる強さ", 0) * f_exp + PWT.get("相手への問いを上げる強さ", 0) * f_ask,
+                       t, (f_over, f_res, f_tone, f_tr, f_prof, f_clk, f_ctx, -f_exp, f_ask)))   # 点・発言・手がかり
     scored.sort(key=lambda x: -x[0])
     return scored
 
@@ -198,7 +202,8 @@ def ensemble(scored, n=10, seed=0):
     """持ち主の案: 選ぶ重みを少しずつ揺らして 10 通り選び、票の多い返事を選ぶ。票の割合 = 自信。"""
     rng = random.Random(seed); votes = Counter()
     for _ in range(n):
-        w = [math.exp(rng.gauss(0, 0.4)), math.exp(rng.gauss(0, 0.4)), 0.3 * math.exp(rng.gauss(0, 0.4)), 0.5 * math.exp(rng.gauss(0, 0.4)), PW * math.exp(rng.gauss(0, 0.4)), 1.0, 0.5 * math.exp(rng.gauss(0, 0.4))]
+        w = [math.exp(rng.gauss(0, 0.4)), math.exp(rng.gauss(0, 0.4)), 0.3 * math.exp(rng.gauss(0, 0.4)), 0.5 * math.exp(rng.gauss(0, 0.4)), PW * math.exp(rng.gauss(0, 0.4)), 1.0, 0.5 * math.exp(rng.gauss(0, 0.4)),
+             PWT.get("体験談を下げる強さ", 0), PWT.get("相手への問いを上げる強さ", 0) * math.exp(rng.gauss(0, 0.4))]
         best = max(scored, key=lambda x: sum(wi * fi for wi, fi in zip(w, x[2])))
         votes[best[1]] += 1
     t, v = votes.most_common(1)[0]
