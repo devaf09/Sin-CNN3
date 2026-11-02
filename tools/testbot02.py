@@ -124,11 +124,31 @@ def self_answer(user, history):
         return f"今は、お話しする方の{PROF['役割']}のようなお手伝いができるようになりたいと思っています。"
     if any(x in u for x in ("どうやって", "どこから来", "生まれ", "仕組み")):
         return f"{PROF['過去・生い立ち']}んです。{PROF['長所']}なところが自慢です。"
+    if any(x in u for x in ("何歳", "年齢", "いくつ")) and PROF.get("年齢"):
+        return f"{PROF['年齢']}歳です。"
+    if any(x in u for x in ("家族", "親", "お父さん", "お母さん")) and PROF.get("家族"):
+        return f"家族は、{PROF['家族']}です。兄弟は{PROF.get('兄弟', 'いません')}なんです。"
+    if any(x in u for x in ("兄弟", "姉妹", "きょうだい")) and PROF.get("兄弟"):
+        return f"兄弟は{PROF['兄弟']}です。賑やかになったら嬉しいです！"
+    if any(x in u for x in ("彼氏", "恋人", "パートナー", "付き合")) and PROF.get("彼氏・パートナー"):
+        return "いないです。今はお仕事優先なんです。" if "仕事優先" in PROF["彼氏・パートナー"] else f"{PROF['彼氏・パートナー']}です。"
+    if any(x in u for x in ("結婚", "旦那", "夫")) and PROF.get("結婚"):
+        return f"結婚は{PROF['結婚']}です。"
+    if any(x in u for x in ("子供", "子ども", "お子さん")) and PROF.get("子供"):
+        return f"子供は{PROF['子供']}です。"
     if any(x in u for x in ("弱点", "短所", "苦手なこと", "できないこと")):
         return f"{PROF['短所']}ので、間違えたら教えてください。"
     return None
 
 
+_fc = []
+if "なし" in str(PROF.get("子供", "")):
+    _fc += ["うちの子", "息子", "娘", "子供が", "子どもが"]
+if "していない" in str(PROF.get("結婚", "")):
+    _fc += ["夫が", "旦那", "妻が", "嫁が", "主人が"]
+if "なし" in str(PROF.get("彼氏・パートナー", "")):
+    _fc += ["彼氏", "彼女が", "恋人が"]
+FAMILY_CONFLICT = re.compile("(" + "|".join(_fc) + ")") if _fc else None                      # プロフィールの家族と食い違う語
 EXPERIENCE = re.compile(r"(昔|実家|子供の(頃|時|ころ)|子どもの(頃|時|ころ)|学生の(頃|時|ころ)|(私|わたし|自分)(は|も|自身|の場合)|うちは|私は.{0,12}(ました|ました。|てました|ています|てます|でした)|僕|うちの|母が|父が|夫が|妻が|旦那|彼氏|彼女が|始めました|行きました|行ってきました|食べました|してました|してます)")
 SHIFT_WORDS = ("ところで", "そういえば", "話は変わ", "話変わ", "全然関係ない", "別の話")
 TOPIC_SHIFT = False
@@ -190,6 +210,8 @@ def candidates(history):
         f_prof = float(bool(cw_ & PBIAS))                                                       # キャラの興味・目標の語を含むか（軽いバイアス）
         f_clk = CLOCK.score(t)                                                                  # 時計グレイン: 時間帯の語は少し上げ、季節外れの語は下げる
         f_ctx = sum(v_ for w_, v_ in ctxw.items() if w_ in cw_ and w_ not in uw) / math.sqrt(len(cw_) + 1)   # 前の会話の話題と重なるか
+        if FAMILY_CONFLICT and FAMILY_CONFLICT.search(t):
+            continue                                                                           # プロフィールと食い違う（いない家族・恋人の話）候補は選ばない
         f_exp = float(bool(EXPERIENCE.search(t)))                                               # 自分の体験談（昔・実家・私も〜した…）か: キャラの生い立ちと食い違うので下げる
         f_ask = float(isq(t) and bool(re.search(r"(ですか|ますか|ました？|ました\?|でしたか|んですか)", t)))   # 相手への問い
         scored.append((f_over + f_res + 0.3 * f_tone + 0.5 * f_tr + PW * f_prof + f_clk + 0.5 * f_ctx - PWT.get("体験談を下げる強さ", 0) * f_exp + PWT.get("相手への問いを上げる強さ", 0) * f_ask,
