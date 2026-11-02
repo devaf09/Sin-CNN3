@@ -7,7 +7,7 @@
   「自信」: 1 位の点が低いとき（共鳴の手がかりが無いとき）は「よく分からない」と正直に返す（実験62 の考えの最初の形）。
 実行: python tools/testbot02.py "発言 1" "発言 2" …（引数が無ければ、決まった例で動かす）
 """
-import json, math, random, re, sys, zlib
+import json, math, os, random, re, sys, time, zlib
 
 import torch
 from collections import Counter, defaultdict
@@ -305,6 +305,55 @@ def unknown_word(user):
 
 
 USER_NAME = None
+
+
+class Interlocutor:
+    """対話者グレイン（持ち主の案 2026-11-02「人格グレインに話し相手の情報を保持する対話者グレインが必要かも」）。
+    相手の 名前・好きなこと・予定・困りごと・口調・よく出る話題・会った回数 を覚え、次に話すときに使う。
+    相手の発言は個人の情報なので、非公開の置き場（Sin-CNN3_private/users/）にだけ保存する。"""
+    DIR = "D:/AI_git/Sin-CNN3_private/users"
+
+    def __init__(self, key):
+        self.key = key; self.path = f"{self.DIR}/{key}.json"
+        self.d = json.load(open(self.path, encoding="utf-8")) if os.path.exists(self.path) else dict(
+            名前=None, 好きなこと=[], 予定=[], 困りごと=[], 口調=dict(丁寧=0, くだけた=0), 話題={}, 会った回数=0, 最後に話した日=None)
+
+    def update(self, u):
+        d = self.d
+        for m_ in re.finditer(r"([一-龥ァ-ヶーa-zA-Zぁ-ん]{2,10}?)(?:が好き|にはまって|にハマって|が趣味)", u):
+            x = re.sub(r"^(最近|今|今日|昨日)", "", m_.group(1))
+            if x and x not in d["好きなこと"]:
+                d["好きなこと"].append(x)
+        if re.search(r"(明日|明後日|来週|来月|今度|週末|今週末|来年)", u) and not isq(u):
+            d["予定"].append(dict(日=time.strftime("%Y-%m-%d"), 内容=u[:40]))
+        if problem_score(u) >= 1.0 and not isq(u):
+            d["困りごと"].append(dict(日=time.strftime("%Y-%m-%d"), 内容=u[:40]))
+        d["口調"]["丁寧" if re.search(r"(です|ます|ません|でした)", u) else "くだけた"] += 1
+        for w in analyze(u)[0]:
+            d["話題"][w] = d["話題"].get(w, 0) + 1
+
+    def welcome_back(self):
+        """前に話した人へのあいさつ: 名前で呼び、いちばん新しい困りごとか予定を聞く。"""
+        d = self.d; s = f"{d['名前']}さん、また来てくださってありがとうございます！"
+        if d["困りごと"]:
+            s += f"前に「{d['困りごと'][-1]['内容']}」とおっしゃっていましたが、その後どうですか？"
+        elif d["予定"]:
+            s += f"前に「{d['予定'][-1]['内容']}」とおっしゃっていましたが、どうでしたか？"
+        elif d["好きなこと"]:
+            s += f"最近も{d['好きなこと'][-1]}は楽しんでいますか？"
+        return s
+
+    def save(self, n_turns):
+        os.makedirs(self.DIR, exist_ok=True)
+        if n_turns:
+            self.d["会った回数"] = self.d.get("会った回数", 0) + 1; self.d["最後に話した日"] = time.strftime("%Y-%m-%d")
+        for k in ("予定", "困りごと"):
+            self.d[k] = self.d[k][-20:]                                                         # 新しい 20 件だけ残す
+        self.d["話題"] = dict(sorted(self.d["話題"].items(), key=lambda kv: -kv[1])[:100])
+        json.dump(self.d, open(self.path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+
+
+USER = None
 PROB_EMO = ("大変", "困", "つら", "辛", "疲れ", "忙し", "悩", "心配", "不安", "面倒", "無理", "ヤバ", "やば", "焦")
 PROB_NEG = ("できな", "出来な", "終わらな", "間に合わな", "わからな", "分からな", "進まな", "うまくいかな", "上手くいかな", "決まらな", "足りな")   # 〜ない・〜なくて の両方
 
@@ -335,10 +384,17 @@ def secretary_offer(user, bt):
 def reply(history):
     """感情（「何に」どうした、のバックトラッキング）→ 内容（揺らした 10 通りの票で選ぶ）→ 質問（話題を続ける）。知らない語は聞き返す。"""
     global USER_NAME
+    if USER:
+        USER.update(history[-1])                                                               # 対話者グレインに、相手の発言から覚える
+        if len(history) == 1 and USER.d.get("名前") and USER.d.get("会った回数", 0) >= 1 and any(g in history[-1] for g in ("こんにちは", "こんばんは", "おはよう", "久しぶり", "また")):
+            USER_NAME = USER.d["名前"]
+            return USER.welcome_back(), 1.0                                                     # 前に話した人 → 名前で呼び、前の困りごと・予定を聞く
     if len(history) >= 2 and "お名前" in history[-2] and not USER_NAME:                         # 名前を聞いたあとの「山田です」を覚える
         m_ = re.match(r"^(?:私は|僕は)?([^、。！!？?\s]{1,8}?)(?:です|と申します|といいます|だよ|と言います)", history[-1])
         if m_:
             USER_NAME = m_.group(1)
+            if USER:
+                USER.d["名前"] = USER_NAME
             rest = history[-1][m_.end():].lstrip("。、！! ")
             sa = self_answer(rest, history) if rest else None
             return f"{USER_NAME}さん、よろしくお願いします！" + (sa or ""), 1.0
@@ -378,7 +434,12 @@ def reply(history):
     return out.replace("？。", "？").replace("！。", "！"), conf
 
 
-if ARGS[:1] == ["--chat"]:                                                                     # 手元で話す: python tools/testbot02.py --chat（空行で終わる）
+USER_KEY = next((a.split("=", 1)[1] for a in ARGS if a.startswith("--user=")), None)          # 対話者グレインの名前（--user=山田 など）。無ければ覚えない
+ARGS = [a for a in ARGS if not a.startswith("--user=")]
+if USER_KEY:
+    USER = Interlocutor(USER_KEY)
+    USER_NAME = USER.d.get("名前")
+if ARGS[:1] == ["--chat"]:                                                                     # 手元で話す: python tools/testbot02.py --chat [--user=名前]（空行で終わる）
     hist = []
     while True:
         try:
@@ -389,12 +450,18 @@ if ARGS[:1] == ["--chat"]:                                                      
             break
         hist.append(u); r, sc = reply(hist); hist.append(r)
         print("ボット:", r, f"（自信 {sc:.1f}）", flush=True)
+        if USER:
+            USER.save(0)
+    if USER:
+        USER.save(len(hist))
     sys.exit(0)
 if ARGS[:1] == ["--dialog"]:                                                                   # 続いた会話の試し: 発言を順に渡す（前の会話が格の逆算・遷移に効く）
     hist = []
     for u in ARGS[1:]:
         hist.append(u); r, sc = reply(hist); hist.append(r)
         print("人:", u); print("ボット:", r, f"（自信 {sc:.1f}）", flush=True)
+    if USER:
+        USER.save(len(hist))
     sys.exit(0)
 tests = ARGS or ["昨日、映画を見てすごく感動したよ", "こんにちは！最近ラーメンにはまってるんだ", "休みの日は何をしていますか？", "犬を飼っているんですが、散歩が大変で", "明日から旅行で北海道に行きます", "最近寝不足でつらいよ", "週末にポポロンタをやったよ"]
 out = []
