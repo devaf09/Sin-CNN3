@@ -20,3 +20,8 @@ __pycache__/
 .pytest_cache/
 *.log
 results/.exp78b_done
+
+# パッケージの作業ファイル
+*.egg-info/
+build/
+dist/
