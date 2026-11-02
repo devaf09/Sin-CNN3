@@ -8,6 +8,8 @@
 実行: python tools/testbot02.py "発言 1" "発言 2" …（引数が無ければ、決まった例で動かす）
 """
 import json, math, random, sys, zlib
+
+import torch
 from collections import Counter, defaultdict
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -30,8 +32,29 @@ for x in NEXT:
 print("候補の発言", len(POOL), flush=True)
 
 
+# ---- 状態遷移グレイン（実験120）: 相手の発言の状態 → 次に返す状態 の見込み（持ち主「次にどの状態で返すかを決める」）----
+TG = torch.load("D:/AI_git/Sin-CNN3_private/models/transition_grain_120.pt", weights_only=False)
+AIZ = ("そう", "へー", "へえ", "なるほど", "確かに", "たしかに", "いいですね", "わかります", "分かります", "ですよね", "ほんと", "本当")
+EMO_F = ("嬉し", "楽し", "悲し", "辛", "つら", "大変", "疲れ", "驚", "困", "怖", "寂し", "面白", "美味し", "好き", "嫌", "心配", "残念", "最高", "幸せ", "羨まし", "すごい", "凄い")
+SELF = ("私", "僕", "自分", "うち", "俺", "わたし"); YOU = ("さん", "あなた", "そちら")
+GREET_F = ("こんにちは", "こんばんは", "おはよう", "よろしく", "ありがとう", "失礼", "さようなら", "またね", "お疲れ")
+
+
+def tg_state(prev, t):
+    """発言の形の手がかり（実験120 と同じ 26 個）→ いちばん近い状態の番号。"""
+    tt = t.rstrip(); pw = analyze(prev)[0] if prev else set(); cw_ = analyze(t)[0]
+    q = tt.endswith(("？", "?", "か", "か。", "の？"))
+    v = [float(tt.endswith(e)) for e in TG["ENDS"]]
+    v += [float(tt.startswith(AIZ)), float(any(e in tt for e in EMO_F)), float(any(tt.startswith(x) or (x + "は") in tt for x in SELF)),
+          float(any(y in tt for y in YOU)), float(q), float(bool(pw & cw_)), float(bool(pw) and not (pw & cw_)),
+          min(len(tt), 80) / 80, float(any(g in tt[:12] for g in GREET_F)), float("？" in tt[:-1] or "?" in tt[:-1])]
+    z = (torch.tensor([v]) - TG["mu"]) / TG["sd"]
+    return int(torch.cdist(z, TG["C"]).argmin(1))
+
+
 def candidates(history):
     uw, up = analyze(history[-1])
+    s_user = tg_state(history[-2] if len(history) >= 2 else "", history[-1])                  # 相手の発言の状態
     keys = set(uw) | {y for x in uw for y in NEXT.get(x, [])[:40]}
     cand = Counter()
     for y in keys:
@@ -49,7 +72,8 @@ def candidates(history):
         f_over = len(uw & cw_) / math.sqrt(len(cw_) + 1)
         f_res = sum(pmi(x, y) for x in uw for y in cw_) / math.sqrt(len(uw) * len(cw_)) if uw and cw_ else 0.0
         f_tone = 1.0 if cp == up else 0.0
-        scored.append((f_over + f_res + 0.3 * f_tone, t, (f_over, f_res, f_tone)))            # 点・発言・手がかり（重なり・共鳴・口調）
+        f_tr = float(TG["logP"][s_user, tg_state(history[-1], t)])                             # この返事の状態は、相手の状態のあとに来やすいか
+        scored.append((f_over + f_res + 0.3 * f_tone + 0.5 * f_tr, t, (f_over, f_res, f_tone, f_tr)))   # 点・発言・手がかり（重なり・共鳴・口調・遷移）
     scored.sort(key=lambda x: -x[0])
     return scored
 
@@ -58,8 +82,8 @@ def ensemble(scored, n=10, seed=0):
     """持ち主の案: 選ぶ重みを少しずつ揺らして 10 通り選び、票の多い返事を選ぶ。票の割合 = 自信。"""
     rng = random.Random(seed); votes = Counter()
     for _ in range(n):
-        w = [math.exp(rng.gauss(0, 0.4)), math.exp(rng.gauss(0, 0.4)), 0.3 * math.exp(rng.gauss(0, 0.4))]
-        best = max(scored, key=lambda x: w[0] * x[2][0] + w[1] * x[2][1] + w[2] * x[2][2])
+        w = [math.exp(rng.gauss(0, 0.4)), math.exp(rng.gauss(0, 0.4)), 0.3 * math.exp(rng.gauss(0, 0.4)), 0.5 * math.exp(rng.gauss(0, 0.4))]
+        best = max(scored, key=lambda x: sum(wi * fi for wi, fi in zip(w, x[2])))
         votes[best[1]] += 1
     t, v = votes.most_common(1)[0]
     return t, v / n
@@ -92,8 +116,8 @@ def last_predicate(ms):
 
 def backtrack(user):
     """「昨日、映画を見てすごく感動したよ」→「感動したんですね」。相手の述語（感情の語を優先）を、くだけた形 + んですね で返す。質問には返さない。"""
-    if isq(user):
-        return ""
+    if isq(user) or any(g in user for g in GREET_F):
+        return ""                                                                              # 問いとあいさつには「〜んですね」で受けない（遷移: あいさつ → あいさつ・問い）
     ms = morphs(user); k = last_predicate(ms)
     if k is None:
         return ""
@@ -207,7 +231,7 @@ def reply(history):
         rq = related_question(history[-1], history + [best])
         if rq:
             parts.append(rq)
-    return "".join(p for p in parts if p), conf
+    return "".join(p for p in parts if p).replace("？。", "？").replace("！。", "！"), conf
 
 
 tests = ARGS or ["昨日、映画を見てすごく感動したよ", "こんにちは！最近ラーメンにはまってるんだ", "休みの日は何をしていますか？", "犬を飼っているんですが、散歩が大変で", "明日から旅行で北海道に行きます", "最近寝不足でつらいよ", "週末にポポロンタをやったよ"]

@@ -87,3 +87,5 @@ for k in range(K):
     print(k, desc[k]["share"], desc[k]["features"], "→", res["top_transitions"][k], flush=True)
 with open("results/exp120.txt", "a", encoding="utf-8") as fo:
     fo.write(json.dumps(res, ensure_ascii=False) + "\n")
+# テストボット02 で「次にどの状態で返すか」を決めるために、状態の分け方と遷移を保存する（非公開の置き場、材料は CC BY-SA の会話）
+torch.save(dict(mu=mu, sd=sd, C=C, logP=logP, ENDS=ENDS, states=desc), "D:/AI_git/Sin-CNN3_private/models/transition_grain_120.pt")
