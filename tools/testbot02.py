@@ -150,8 +150,8 @@ def candidates(history):
     scored = []
     for k in ids:
         t = POOL[k]
-        if t in history:
-            continue
+        if any(t in h_ for h_ in history):
+            continue                                                                           # もう言った返事（自分の前の返事の中にあるもの）は繰り返さない
         cw_, cp = analyze(t)
         f_over = len(uw & cw_) / math.sqrt(len(cw_) + 1)
         f_res = sum(pmi(x, y) for x in uw for y in cw_) / math.sqrt(len(uw) * len(cw_)) if uw and cw_ else 0.0
