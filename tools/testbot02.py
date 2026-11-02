@@ -52,6 +52,43 @@ def tg_state(prev, t):
     return int(torch.cdist(z, TG["C"]).argmin(1))
 
 
+# ---- キャラクタのプロフィール（持ち主が書いたもの、data/characters/）: 自己紹介・自分についての質問・返事選びの軽いバイアス ----
+CHAR_PATH = next((a.split("=", 1)[1] for a in ARGS if a.startswith("--char=")), "data/characters/secretary_kotoyui_tonari.json")
+ARGS = [a for a in ARGS if not a.startswith("--char=")]
+PROF = json.load(open(CHAR_PATH, encoding="utf-8"))
+PBIAS = set(analyze(" ".join(PROF.get("バイアスの語", []) + [PROF.get("興味のある内容", ""), PROF.get("好きな会話", ""), PROF.get("今の目標", "")]))[0])
+PW = PROF.get("バイアスの強さ", 0.2)
+OTHER_SELF = [x for x in ("僕", "俺", "あたし", "わし", "おいら", "わたし", "私") if x != PROF.get("一人称", "私") and not (PROF.get("一人称") == "私" and x == "わたし")]
+
+
+def self_answer(user, history):
+    """自分についての質問・自己紹介への答え（プロフィールの項目を、決まった言い回しに入れて返す）。当てはまらなければ None。"""
+    u = user
+    if len(history) <= 1 and any(g in u for g in ("こんにちは", "はじめまして", "初めまして", "よろしく", "こんばんは", "おはよう")):
+        intros = PROF["自己紹介"]
+        return intros[2] if "名前" not in u and len(intros) > 2 else intros[0]               # 始めのあいさつ → 自己紹介（相手の名前を聞く形を優先）
+    if "自己紹介" in u:
+        return PROF["自己紹介"][0]
+    to_me = isq(u) or any(x in u for x in ("あなた", "君", "きみ", "となり", PROF["苗字"]))   # 自分についての質問か（ただの話の中の「仕事」には答えない）
+    if not to_me:
+        return None
+    if any(x in u for x in ("名前", "誰", "だれ")) and any(x in u for x in ("あなた", "君", "きみ", "お名前", "名前は", "誰", "だれ")):
+        return f"{PROF['一人称']}は{PROF['苗字']}{PROF['名前']}と申します。{PROF['苗字']}と呼んでください。"
+    if any(x in u for x in ("好きな", "好き？", "何が好き")):
+        return f"{PROF['好きな会話']}が好きです。色々教えてもらえると嬉しいです！"
+    if any(x in u for x in ("嫌いな", "苦手")):
+        return f"{PROF['嫌いな会話']}は、少し苦手です。"
+    if any(x in u for x in ("興味", "趣味")):
+        return f"{PROF['興味のある内容']}に興味があります。どんなふうに考えるのか、聞くのが好きなんです。"
+    if any(x in u for x in ("何してる", "仕事", "目標", "何ができる", "何をしてる")):
+        return f"今は、お話しする方の{PROF['役割']}のようなお手伝いができるようになりたいと思っています。"
+    if any(x in u for x in ("どうやって", "どこから来", "生まれ", "仕組み")):
+        return f"{PROF['過去・生い立ち']}んです。{PROF['長所']}なところが自慢です。"
+    if any(x in u for x in ("弱点", "短所", "苦手なこと", "できないこと")):
+        return f"{PROF['短所']}ので、間違えたら教えてください。"
+    return None
+
+
 def candidates(history):
     uw, up = analyze(history[-1])
     s_user = tg_state(history[-2] if len(history) >= 2 else "", history[-1])                  # 相手の発言の状態
@@ -73,7 +110,10 @@ def candidates(history):
         f_res = sum(pmi(x, y) for x in uw for y in cw_) / math.sqrt(len(uw) * len(cw_)) if uw and cw_ else 0.0
         f_tone = 1.0 if cp == up else 0.0
         f_tr = float(TG["logP"][s_user, tg_state(history[-1], t)])                             # この返事の状態は、相手の状態のあとに来やすいか
-        scored.append((f_over + f_res + 0.3 * f_tone + 0.5 * f_tr, t, (f_over, f_res, f_tone, f_tr)))   # 点・発言・手がかり（重なり・共鳴・口調・遷移）
+        if any(x in t for x in OTHER_SELF):
+            continue                                                                           # キャラの一人称（私）と違う一人称の発言は選ばない
+        f_prof = float(bool(cw_ & PBIAS))                                                       # キャラの興味・目標の語を含むか（軽いバイアス）
+        scored.append((f_over + f_res + 0.3 * f_tone + 0.5 * f_tr + PW * f_prof, t, (f_over, f_res, f_tone, f_tr, f_prof)))   # 点・発言・手がかり（重なり・共鳴・口調・遷移・キャラ）
     scored.sort(key=lambda x: -x[0])
     return scored
 
@@ -82,7 +122,7 @@ def ensemble(scored, n=10, seed=0):
     """持ち主の案: 選ぶ重みを少しずつ揺らして 10 通り選び、票の多い返事を選ぶ。票の割合 = 自信。"""
     rng = random.Random(seed); votes = Counter()
     for _ in range(n):
-        w = [math.exp(rng.gauss(0, 0.4)), math.exp(rng.gauss(0, 0.4)), 0.3 * math.exp(rng.gauss(0, 0.4)), 0.5 * math.exp(rng.gauss(0, 0.4))]
+        w = [math.exp(rng.gauss(0, 0.4)), math.exp(rng.gauss(0, 0.4)), 0.3 * math.exp(rng.gauss(0, 0.4)), 0.5 * math.exp(rng.gauss(0, 0.4)), PW * math.exp(rng.gauss(0, 0.4))]
         best = max(scored, key=lambda x: sum(wi * fi for wi, fi in zip(w, x[2])))
         votes[best[1]] += 1
     t, v = votes.most_common(1)[0]
@@ -110,7 +150,7 @@ def last_predicate(ms):
     """文の最後の述語の文節（感情の語があればそれを優先）。"""
     idx = [i for i, w in enumerate(ms) if not w[2].startswith(FUNC117) and ("非自立可能" in w[2] or "非自立" not in w[2]) and w[2].startswith(("動詞", "形容詞", "形状詞", "名詞"))
            and not (i > 0 and ms[i - 1][2].startswith("助詞-接続助詞"))]
-    emo = [i for i in idx if ms[i][1] in EMO]
+    emo = [i for i, w in enumerate(ms) if w[1] in EMO and not w[2].startswith(FUNC117)]       # 感情の語は「〜て」のあとでも拾う（忙しくて大変）
     return (emo or idx or [None])[-1]
 
 
@@ -164,6 +204,8 @@ def backtrack(user, history=()):
     ms = morphs(user); k = last_predicate(ms)
     if k is None:
         return ""
+    if ms[k][1] in ("為る", "する") and k > 0 and ms[k - 1][2].startswith("名詞"):
+        k -= 1                                                                                 # 整理 + する は、整理 から（予定を整理したいんですね）
     j = k + 1
     while j < len(ms) and (ms[j][2].startswith(FUNC117) or "非自立" in ms[j][2]) and not ms[j][2].startswith("補助記号") and not (
             ms[j][2].startswith("助詞-接続助詞") and not (j + 1 < len(ms) and "非自立" in ms[j + 1][2])):   # 行って + みたい のように、て の後ろが補助の動詞なら続ける
@@ -260,8 +302,22 @@ def unknown_word(user):
     return None
 
 
+USER_NAME = None
+
+
 def reply(history):
     """感情（「何に」どうした、のバックトラッキング）→ 内容（揺らした 10 通りの票で選ぶ）→ 質問（話題を続ける）。知らない語は聞き返す。"""
+    global USER_NAME
+    if len(history) >= 2 and "お名前" in history[-2] and not USER_NAME:                         # 名前を聞いたあとの「山田です」を覚える
+        m_ = re.match(r"^(?:私は|僕は)?([^、。！!？?\s]{1,8}?)(?:です|と申します|といいます|だよ|と言います)", history[-1])
+        if m_:
+            USER_NAME = m_.group(1)
+            rest = history[-1][m_.end():].lstrip("。、！! ")
+            sa = self_answer(rest, history) if rest else None
+            return f"{USER_NAME}さん、よろしくお願いします！" + (sa or ""), 1.0
+    sa = self_answer(history[-1], history)
+    if sa:                                                                                     # 自己紹介・自分についての質問はプロフィールから
+        return sa, 1.0
     bt = backtrack(history[-1], history[:-1])
     new = unknown_word(history[-1])
     if new:                                                                                    # 知らない語は共感を弱める（持ち主 2026-11-02: 分からないまま「〜んですね」と受けると不自然）
