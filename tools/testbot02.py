@@ -63,12 +63,50 @@ PW = PWT.get("興味の語へのバイアス", 0.2)
 OTHER_SELF = [x for x in ("僕", "俺", "あたし", "わし", "おいら", "わたし", "私") if x != PROF.get("一人称", "私") and not (PROF.get("一人称") == "私" and x == "わたし")]
 
 
+class Clock:
+    """時計グレイン（持ち主の案 2026-11-02）: いまの時刻を 10 分刻みで持ち、時間帯・月・季節 を出す。表は tools/clock_grain.json（持ち主が直せる）。
+    --now=2026-12-24T20:15 で時刻を決めて試せる。"""
+    def __init__(self, now=None):
+        self.t = json.load(open("tools/clock_grain.json", encoding="utf-8"))
+        self.fixed = time.strptime(now, "%Y-%m-%dT%H:%M") if now else None
+
+    def now(self):
+        tm = self.fixed or time.localtime(); step = self.t["刻み_分"]
+        return tm.tm_year, tm.tm_mon, tm.tm_hour, (tm.tm_min // step) * step
+
+    def part(self):
+        _, _, h, m = self.now(); hm = f"{h:02d}:{m:02d}"
+        return next(p for p in self.t["時間帯"] if p["から"] <= hm < p["まで"])
+
+    def season(self):
+        mon = self.now()[1]
+        return next(k for k, v in self.t["季節"].items() if mon in v)
+
+    def score(self, text):
+        """候補の発言の点: いまの時間帯の語を含めば少し上げ、季節外れの語を含めば下げる。"""
+        mon = self.now()[1]; sc = 0.0
+        if any(w in text for w in self.part()["語"]):
+            sc += self.t["時間帯の語の強さ"]
+        for w, months in self.t["季節の語"].items():
+            if not w.startswith("_") and w in text and mon not in months:
+                sc -= self.t["季節外れの強さ"]
+        return sc
+
+
+CLOCK = Clock(next((a.split("=", 1)[1] for a in ARGS if a.startswith("--now=")), None))
+ARGS = [a for a in ARGS if not a.startswith("--now=")]
+
+
 def self_answer(user, history):
     """自分についての質問・自己紹介への答え（プロフィールの項目を、決まった言い回しに入れて返す）。当てはまらなければ None。"""
     u = user
     if len(history) <= 1 and any(g in u for g in ("こんにちは", "はじめまして", "初めまして", "よろしく", "こんばんは", "おはよう")):
         intros = PROF["自己紹介"]
-        return intros[2] if "名前" not in u and len(intros) > 2 else intros[0]               # 始めのあいさつ → 自己紹介（相手の名前を聞く形を優先）
+        it = intros[2] if "名前" not in u and len(intros) > 2 else intros[0]                 # 始めのあいさつ → 自己紹介（相手の名前を聞く形を優先）
+        return it.replace("こんにちは", CLOCK.part()["あいさつ"])                               # 時間帯のあいさつに（時計グレイン）
+    if re.search(r"(今|いま)(何時|なんじ)|何月|季節|今日は何", u):
+        y, mo, h, mi = CLOCK.now()
+        return f"今は{mo}月、{h}時{mi}分ごろです。{CLOCK.season()}ですね。"
     if "自己紹介" in u:
         return PROF["自己紹介"][0]
     to_me = isq(u) or any(x in u for x in ("あなた", "君", "きみ", "となり", PROF["苗字"]))   # 自分についての質問か（ただの話の中の「仕事」には答えない）
@@ -115,7 +153,8 @@ def candidates(history):
         if any(x in t for x in OTHER_SELF):
             continue                                                                           # キャラの一人称（私）と違う一人称の発言は選ばない
         f_prof = float(bool(cw_ & PBIAS))                                                       # キャラの興味・目標の語を含むか（軽いバイアス）
-        scored.append((f_over + f_res + 0.3 * f_tone + 0.5 * f_tr + PW * f_prof, t, (f_over, f_res, f_tone, f_tr, f_prof)))   # 点・発言・手がかり（重なり・共鳴・口調・遷移・キャラ）
+        f_clk = CLOCK.score(t)                                                                  # 時計グレイン: 時間帯の語は少し上げ、季節外れの語は下げる
+        scored.append((f_over + f_res + 0.3 * f_tone + 0.5 * f_tr + PW * f_prof + f_clk, t, (f_over, f_res, f_tone, f_tr, f_prof, f_clk)))   # 点・発言・手がかり
     scored.sort(key=lambda x: -x[0])
     return scored
 
@@ -124,7 +163,7 @@ def ensemble(scored, n=10, seed=0):
     """持ち主の案: 選ぶ重みを少しずつ揺らして 10 通り選び、票の多い返事を選ぶ。票の割合 = 自信。"""
     rng = random.Random(seed); votes = Counter()
     for _ in range(n):
-        w = [math.exp(rng.gauss(0, 0.4)), math.exp(rng.gauss(0, 0.4)), 0.3 * math.exp(rng.gauss(0, 0.4)), 0.5 * math.exp(rng.gauss(0, 0.4)), PW * math.exp(rng.gauss(0, 0.4))]
+        w = [math.exp(rng.gauss(0, 0.4)), math.exp(rng.gauss(0, 0.4)), 0.3 * math.exp(rng.gauss(0, 0.4)), 0.5 * math.exp(rng.gauss(0, 0.4)), PW * math.exp(rng.gauss(0, 0.4)), 1.0]
         best = max(scored, key=lambda x: sum(wi * fi for wi, fi in zip(w, x[2])))
         votes[best[1]] += 1
     t, v = votes.most_common(1)[0]
@@ -141,7 +180,7 @@ FUNC117 = _ns117["FUNC"]
 EMO = {"感動", "嬉しい", "楽しい", "悲しい", "辛い", "大変", "疲れる", "驚く", "困る", "怖い", "寂しい", "面白い", "美味しい", "好き", "嫌い", "心配", "残念", "最高", "幸せ", "ショック", "緊張"}
 
 
-isq = lambda t: t.rstrip().endswith(("？", "?", "か", "か。", "の？"))
+isq = lambda t: t.rstrip().rstrip("。…").endswith(("？", "?", "か", "の？", "かな", "かなぁ", "かなあ"))   # 〜かな（迷い）も問いと同じに扱う
 
 
 def morphs(text):
