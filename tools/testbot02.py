@@ -132,7 +132,14 @@ def self_answer(user, history):
 def candidates(history):
     uw, up = analyze(history[-1])
     s_user = tg_state(history[-2] if len(history) >= 2 else "", history[-1])                  # 相手の発言の状態
-    keys = set(uw) | {y for x in uw for y in NEXT.get(x, [])[:40]}
+    ctxw = Counter()                                                                           # 前の会話の語（持ち主 2026-11-02「自信の判定に以前の会話の情報が乗ってない」）
+    for k_, u_ in enumerate(reversed(history[-5:-1])):
+        for w_ in analyze(u_)[0]:
+            ctxw[w_] += 0.7 ** k_                                                              # 古い発言ほど薄く
+    if USER:
+        for w_, c_ in sorted(USER.d["話題"].items(), key=lambda kv: -kv[1])[:10]:
+            ctxw[w_] += 0.3                                                                    # 対話者グレインのよく出る話題も薄く
+    keys = set(uw) | {y for x in uw for y in NEXT.get(x, [])[:40]} | {w_ for w_, v_ in ctxw.most_common(5)}
     cand = Counter()
     for y in keys:
         for k in INV.get(y, [])[:3000]:
@@ -154,7 +161,8 @@ def candidates(history):
             continue                                                                           # キャラの一人称（私）と違う一人称の発言は選ばない
         f_prof = float(bool(cw_ & PBIAS))                                                       # キャラの興味・目標の語を含むか（軽いバイアス）
         f_clk = CLOCK.score(t)                                                                  # 時計グレイン: 時間帯の語は少し上げ、季節外れの語は下げる
-        scored.append((f_over + f_res + 0.3 * f_tone + 0.5 * f_tr + PW * f_prof + f_clk, t, (f_over, f_res, f_tone, f_tr, f_prof, f_clk)))   # 点・発言・手がかり
+        f_ctx = sum(v_ for w_, v_ in ctxw.items() if w_ in cw_ and w_ not in uw) / math.sqrt(len(cw_) + 1)   # 前の会話の話題と重なるか
+        scored.append((f_over + f_res + 0.3 * f_tone + 0.5 * f_tr + PW * f_prof + f_clk + 0.5 * f_ctx, t, (f_over, f_res, f_tone, f_tr, f_prof, f_clk, f_ctx)))   # 点・発言・手がかり
     scored.sort(key=lambda x: -x[0])
     return scored
 
@@ -163,7 +171,7 @@ def ensemble(scored, n=10, seed=0):
     """持ち主の案: 選ぶ重みを少しずつ揺らして 10 通り選び、票の多い返事を選ぶ。票の割合 = 自信。"""
     rng = random.Random(seed); votes = Counter()
     for _ in range(n):
-        w = [math.exp(rng.gauss(0, 0.4)), math.exp(rng.gauss(0, 0.4)), 0.3 * math.exp(rng.gauss(0, 0.4)), 0.5 * math.exp(rng.gauss(0, 0.4)), PW * math.exp(rng.gauss(0, 0.4)), 1.0]
+        w = [math.exp(rng.gauss(0, 0.4)), math.exp(rng.gauss(0, 0.4)), 0.3 * math.exp(rng.gauss(0, 0.4)), 0.5 * math.exp(rng.gauss(0, 0.4)), PW * math.exp(rng.gauss(0, 0.4)), 1.0, 0.5 * math.exp(rng.gauss(0, 0.4))]
         best = max(scored, key=lambda x: sum(wi * fi for wi, fi in zip(w, x[2])))
         votes[best[1]] += 1
     t, v = votes.most_common(1)[0]
@@ -404,6 +412,7 @@ def problem_score(user):
     sc += 1.0 if re.search(r"たい(んだ|んです|ん)?(けど|が|のに)", user) else 0.0
     sc += 1.0 if any(n in user for n in PROB_NEG) else 0.0
     sc += 0.5 if re.search(r"(けど|けれど|が|のに)[。…]*$", user.strip()) else 0.0
+    sc -= 1.0 if re.search(r"(楽しみ|嬉し|うれし|楽しい|ワクワク|わくわく|最高)", user) else 0.0   # 「大変だけど楽しみ」は困りごとではない
     return sc
 
 
