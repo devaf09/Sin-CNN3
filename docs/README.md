@@ -7,6 +7,7 @@
 | 文書 | 中身 |
 |---|---|
 | [overview.md](overview.md) | いまの状態が一目で分かるページ |
+| [unique_results.md](unique_results.md) | 既存の AI やシステムにない成果と、そのしくみ |
 | [summary_20261027.md](summary_20261027.md) | 初日のまとめ（実験01〜26） |
 | [summary_20261031.md](summary_20261031.md) | 一時まとめ（実験55〜77） |
 | [handover_kotoyui_20261102.md](handover_kotoyui_20261102.md) | 成果のまとめと言結いへの引き継ぎ（実験99〜121） |
